@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import './lib/api-base.ts';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Conversation,

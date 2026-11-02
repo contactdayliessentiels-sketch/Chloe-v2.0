@@ -116,10 +116,10 @@ export const AvatarPresence: React.FC<AvatarPresenceProps> = ({
       case 'small':
         return isSidePanel ? 'h-[50vh] max-h-[460px]' : 'h-[52vh] max-h-[500px]';
       case 'large':
-        return isSidePanel ? 'h-[85vh] max-h-[750px]' : 'h-[86vh] max-h-[820px]';
+        return isSidePanel ? 'h-[88dvh] max-h-[900px]' : 'h-[92dvh] max-h-[980px]';
       case 'medium':
       default:
-        return isSidePanel ? 'h-[70vh] max-h-[620px]' : 'h-[72vh] max-h-[680px]';
+        return isSidePanel ? 'h-[78dvh] max-h-[760px]' : 'h-[84dvh] max-h-[900px]';
     }
   };
 
@@ -128,12 +128,12 @@ export const AvatarPresence: React.FC<AvatarPresenceProps> = ({
     if (isSidePanel) return 'opacity-100';
     switch (preferences.visibility) {
       case 'low':
-        return 'opacity-25 hover:opacity-40 transition-opacity duration-500';
+        return 'opacity-45 hover:opacity-60 transition-opacity duration-500';
       case 'high':
-        return 'opacity-85';
+        return 'opacity-95';
       case 'normal':
       default:
-        return 'opacity-55';
+        return 'opacity-80';
     }
   };
 

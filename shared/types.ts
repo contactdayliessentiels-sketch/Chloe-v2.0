@@ -36,7 +36,7 @@ export interface AIProviderConfig {
   keyUrl: string;
   hasKey: boolean;
   maskedKey: string;
-  status: 'connected' | 'not_configured' | 'error';
+  status: 'connected' | 'configured_untested' | 'not_configured' | 'error';
   models: string[];
   selectedModel: string;
 }

@@ -14,3 +14,14 @@ data/backups/
 data/ai_providers.json
 android/local.properties
 
+# CHLOE AI private runtime data and machine-specific configuration
+data/*.json
+data/backups/*.json
+.env
+.env.*
+!.env.production.example
+.android-sdk/
+android/.gradle/
+.gradle/
+*.zip
+public/assets/aistudio/

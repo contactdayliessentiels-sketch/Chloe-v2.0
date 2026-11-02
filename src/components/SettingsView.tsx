@@ -29,6 +29,13 @@ import {
 import { useAvatarState } from '../hooks/useAvatarState.ts';
 import { AvatarSize, AvatarPosition, AvatarVisibility, AvatarLayoutMode } from '../types/avatar.ts';
 
+const PROVIDER_FALLBACKS: AIProviderConfig[] = [
+  { id: 'gemini', name: 'Google Gemini', endpoint: 'Google GenAI Cloud', description: 'Modèle multimodal Google.', keyUrl: 'https://aistudio.google.com/app/apikey', hasKey: false, maskedKey: '', status: 'not_configured', models: ['gemini-3.8-flash', 'gemini-4-argon', 'gemini-3.1-flash-lite'], selectedModel: 'gemini-3.8-flash' },
+  { id: 'openai', name: 'OpenAI', endpoint: 'https://api.openai.com/v1', description: 'Modèles OpenAI.', keyUrl: 'https://platform.openai.com/api-keys', hasKey: false, maskedKey: '', status: 'not_configured', models: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'gpt-4.5-preview'], selectedModel: 'gpt-4o' },
+  { id: 'nvidia', name: 'NVIDIA NIM', endpoint: 'https://integrate.api.nvidia.com/v1', description: 'Modèles NVIDIA NIM.', keyUrl: 'https://build.nvidia.com', hasKey: false, maskedKey: '', status: 'not_configured', models: ['meta/llama-3.3-70b-instruct', 'mistralai/mistral-large-2-instruct', 'deepseek-ai/deepseek-r1', 'nvidia/llama-3.1-nemotron-70b-instruct'], selectedModel: 'meta/llama-3.3-70b-instruct' },
+  { id: 'openrouter', name: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1', description: 'Passerelle multi-fournisseurs.', keyUrl: 'https://openrouter.ai/keys', hasKey: false, maskedKey: '', status: 'not_configured', models: ['deepseek/deepseek-r1', 'anthropic/claude-3.5-sonnet', 'meta-llama/llama-3.3-70b-instruct', 'google/gemini-2.0-flash-001', 'openai/gpt-4o'], selectedModel: 'deepseek/deepseek-r1' },
+];
+
 interface SettingsViewProps {
   settings: UserSettings;
   onUpdateSettings: (updates: Partial<UserSettings>) => Promise<void>;
@@ -46,7 +53,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [savedFeedback, setSavedFeedback] = useState(false);
 
   // Multi-Provider state
-  const [providers, setProviders] = useState<AIProviderConfig[]>([]);
+  const [providers, setProviders] = useState<AIProviderConfig[]>(PROVIDER_FALLBACKS);
+  const [providersError, setProvidersError] = useState<string | null>(null);
   const [activeProvider, setActiveProvider] = useState<AIProviderId>('gemini');
   const [activeModel, setActiveModel] = useState<string>('gemini-3.8-flash');
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
@@ -58,14 +66,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const fetchProviders = async () => {
     try {
       const res = await fetch('/api/providers');
-      if (res.ok) {
-        const data = await res.json();
-        setProviders(data.providers || []);
-        setActiveProvider(data.activeProvider || 'gemini');
-        setActiveModel(data.activeModel || 'gemini-3.8-flash');
-      }
-    } catch (e) {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setProviders(Array.isArray(data.providers) && data.providers.length ? data.providers : PROVIDER_FALLBACKS);
+      setActiveProvider(data.activeProvider || 'gemini');
+      setActiveModel(data.activeModel || 'gemini-3.8-flash');
+      setProvidersError(null);
+    } catch (e: any) {
       console.warn('Erreur chargement providers:', e);
+      setProvidersError(`Impossible de charger les fournisseurs : ${e.message || 'serveur API inaccessible'}. Vérifiez l’URL API et le backend HTTPS.`);
+      setProviders(prev => prev.length ? prev : PROVIDER_FALLBACKS);
     }
   };
 
@@ -83,12 +93,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, key: key.trim() }),
       });
-      if (res.ok) {
-        setKeyInputs(prev => ({ ...prev, [id]: '' }));
-        await fetchProviders();
-      }
-    } catch (e) {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setKeyInputs(prev => ({ ...prev, [id]: '' }));
+      setProvidersError(null);
+      await fetchProviders();
+    } catch (e: any) {
       console.error('Erreur sauvegarde clé:', e);
+      setProvidersError(`Sauvegarde impossible : ${e.message || 'erreur serveur'}`);
     } finally {
       setSavingKeyId(null);
     }
@@ -101,14 +113,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, model }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setActiveProvider(data.activeProvider);
-        setActiveModel(data.activeModel);
-        setProviders(data.providers || []);
-      }
-    } catch (e) {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setActiveProvider(data.activeProvider);
+      setActiveModel(data.activeModel);
+      setProviders(data.providers || PROVIDER_FALLBACKS);
+      setProvidersError(null);
+    } catch (e: any) {
       console.error('Erreur sélection provider:', e);
+      setProvidersError(`Activation impossible : ${e.message || 'erreur serveur'}`);
+    }
+  };
+
+  const handleSetProviderModel = async (id: AIProviderId, model: string) => {
+    try {
+      const res = await fetch('/api/providers/model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, model }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setProviders(data.providers || PROVIDER_FALLBACKS);
+      setActiveProvider(data.activeProvider || activeProvider);
+      setActiveModel(data.activeModel || activeModel);
+      setProvidersError(null);
+    } catch (e: any) {
+      setProvidersError(`Modification du modèle impossible : ${e.message || 'erreur serveur'}`);
     }
   };
 
@@ -331,10 +362,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </span>
             </div>
           </div>
-          <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 font-semibold animate-pulse">
-            En ligne
+          <span className="text-[10px] px-2.5 py-1 rounded-full bg-slate-800/70 text-slate-300 border border-slate-600/40 font-semibold">
+            Moteur sélectionné
           </span>
         </div>
+
+        {providersError && (
+          <div role="alert" className="p-3 rounded-xl bg-amber-950/30 border border-amber-500/40 text-amber-200 text-xs leading-relaxed">
+            {providersError}
+          </div>
+        )}
 
         {/* Provider Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -399,7 +436,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </label>
                   <select
                     value={p.selectedModel}
-                    onChange={e => handleSelectProvider(p.id, e.target.value)}
+                    onChange={e => handleSetProviderModel(p.id, e.target.value)}
                     className="w-full bg-[#141933] border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-purple-500 font-mono"
                   >
                     {p.models.map(m => (

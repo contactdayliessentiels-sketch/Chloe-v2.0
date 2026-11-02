@@ -1,26 +1,26 @@
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { GoogleGenAI } from '@google/genai';
 import { AIProviderId, AIProviderConfig } from '../shared/types.ts';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const KEYS_FILE = path.join(DATA_DIR, 'ai_providers.json');
+const PROVIDER_IDS: AIProviderId[] = ['gemini', 'openai', 'nvidia', 'openrouter'];
+type KeyMap = Partial<Record<AIProviderId, string>>;
 
 interface StoredProviderData {
   activeProvider: AIProviderId;
   activeModel: string;
-  keys: {
-    gemini?: string;
-    openai?: string;
-    nvidia?: string;
-    openrouter?: string;
-  };
-  selectedModels: {
-    gemini: string;
-    openai: string;
-    nvidia: string;
-    openrouter: string;
-  };
+  keys: KeyMap;
+  selectedModels: Record<AIProviderId, string>;
+}
+
+interface EncryptedKeyPayload {
+  version: 1;
+  iv: string;
+  authTag: string;
+  ciphertext: string;
 }
 
 const DEFAULT_MODELS: Record<AIProviderId, string> = {
@@ -32,23 +32,20 @@ const DEFAULT_MODELS: Record<AIProviderId, string> = {
 
 const PROVIDER_METADATA: Record<AIProviderId, { name: string; endpoint: string; description: string; keyUrl: string; models: string[] }> = {
   gemini: {
-    name: 'Google Gemini',
-    endpoint: 'Google GenAI Cloud',
-    description: 'Modèle multimodal officiel Google avec raisonnement et recherche Google Grounding.',
+    name: 'Google Gemini', endpoint: 'Google GenAI Cloud',
+    description: 'Modèle multimodal Google avec raisonnement et recherche Google Grounding.',
     keyUrl: 'https://aistudio.google.com/app/apikey',
     models: ['gemini-3.8-flash', 'gemini-4-argon', 'gemini-3.1-flash-lite'],
   },
   openai: {
-    name: 'OpenAI',
-    endpoint: 'https://api.openai.com/v1',
-    description: 'Modèles phares OpenAI GPT-4o, GPT-4o Mini et série o3-mini.',
+    name: 'OpenAI', endpoint: 'https://api.openai.com/v1',
+    description: 'Modèles OpenAI accessibles via l’API officielle.',
     keyUrl: 'https://platform.openai.com/api-keys',
     models: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'gpt-4.5-preview'],
   },
   nvidia: {
-    name: 'NVIDIA NIM (build.nvidia.com)',
-    endpoint: 'https://integrate.api.nvidia.com/v1',
-    description: 'Microservices NVIDIA NIM accélérés par GPU (Llama 3.3, Mistral Large, DeepSeek R1).',
+    name: 'NVIDIA NIM', endpoint: 'https://integrate.api.nvidia.com/v1',
+    description: 'Modèles servis par NVIDIA NIM.',
     keyUrl: 'https://build.nvidia.com',
     models: [
       'meta/llama-3.3-70b-instruct',
@@ -58,9 +55,8 @@ const PROVIDER_METADATA: Record<AIProviderId, { name: string; endpoint: string; 
     ],
   },
   openrouter: {
-    name: 'OpenRouter',
-    endpoint: 'https://openrouter.ai/api/v1',
-    description: 'Passerelle universelle unifiée avec accès à Claude 3.5, DeepSeek R1, Llama et Gemini.',
+    name: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1',
+    description: 'Passerelle unifiée vers plusieurs fournisseurs et familles de modèles.',
     keyUrl: 'https://openrouter.ai/keys',
     models: [
       'deepseek/deepseek-r1',
@@ -72,308 +68,353 @@ const PROVIDER_METADATA: Record<AIProviderId, { name: string; endpoint: string; 
   },
 };
 
+function isProviderId(value: unknown): value is AIProviderId {
+  return typeof value === 'string' && PROVIDER_IDS.includes(value as AIProviderId);
+}
+
+function errorStatus(error: unknown): number | undefined {
+  if (error && typeof error === 'object' && 'status' in error && typeof (error as any).status === 'number') {
+    return (error as any).status;
+  }
+  const match = String((error as any)?.message || error || '').match(/(?:HTTP|Erreur)\s*(\d{3})/i);
+  return match ? Number(match[1]) : undefined;
+}
+
 class ProviderManager {
   private data: StoredProviderData;
+  private legacyPlaintextLoaded = false;
 
   constructor() {
     this.data = this.loadData();
-    // Auto-detect environment variables
-    if (!this.data.keys.gemini && process.env.GEMINI_API_KEY) {
-      this.data.keys.gemini = process.env.GEMINI_API_KEY;
+    for (const id of PROVIDER_IDS) {
+      const envName = `${id.toUpperCase()}_API_KEY`;
+      if (!this.data.keys[id] && process.env[envName]) this.data.keys[id] = process.env[envName];
     }
-    if (!this.data.keys.openai && process.env.OPENAI_API_KEY) {
-      this.data.keys.openai = process.env.OPENAI_API_KEY;
-    }
-    if (!this.data.keys.nvidia && process.env.NVIDIA_API_KEY) {
-      this.data.keys.nvidia = process.env.NVIDIA_API_KEY;
-    }
-    if (!this.data.keys.openrouter && process.env.OPENROUTER_API_KEY) {
-      this.data.keys.openrouter = process.env.OPENROUTER_API_KEY;
+
+    // Automatically encrypt an old plaintext file when the encryption key is configured.
+    if (this.legacyPlaintextLoaded && process.env.CHLOE_ENCRYPTION_KEY) {
+      this.saveData();
+      console.info('[CHLOE AI] Legacy provider keys migrated to encrypted storage.');
+    } else if (this.legacyPlaintextLoaded) {
+      console.warn('[CHLOE AI] Legacy provider keys are still plaintext. Set CHLOE_ENCRYPTION_KEY and re-save/rotate them.');
     }
   }
 
-  private loadData(): StoredProviderData {
-    try {
-      if (fs.existsSync(KEYS_FILE)) {
-        const raw = fs.readFileSync(KEYS_FILE, 'utf-8');
-        return JSON.parse(raw);
-      }
-    } catch (e) {
-      console.warn('Impossible de charger les clés fournisseurs:', e);
+  private encryptionKey(): Buffer {
+    const secret = process.env.CHLOE_ENCRYPTION_KEY?.trim() || '';
+    if (!/^[a-f0-9]{64}$/i.test(secret)) {
+      throw new Error('CHLOE_ENCRYPTION_KEY must be a 64-character hexadecimal value (32 random bytes).');
     }
+    return Buffer.from(secret, 'hex');
+  }
+
+  private encryptKeys(keys: KeyMap): EncryptedKeyPayload {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.encryptionKey(), iv);
+    const ciphertext = Buffer.concat([
+      cipher.update(JSON.stringify(keys), 'utf8'),
+      cipher.final(),
+    ]);
     return {
-      activeProvider: 'gemini',
-      activeModel: DEFAULT_MODELS.gemini,
-      keys: {
-        gemini: process.env.GEMINI_API_KEY || '',
-      },
-      selectedModels: { ...DEFAULT_MODELS },
+      version: 1,
+      iv: iv.toString('base64'),
+      authTag: cipher.getAuthTag().toString('base64'),
+      ciphertext: ciphertext.toString('base64'),
     };
   }
 
-  private saveData(): void {
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-      fs.writeFileSync(KEYS_FILE, JSON.stringify(this.data, null, 2), 'utf-8');
-    } catch (e) {
-      console.error('Erreur sauvegarde clés:', e);
+  private decryptKeys(payload: EncryptedKeyPayload): KeyMap {
+    if (payload.version !== 1) throw new Error('Version de stockage des clés non prise en charge.');
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      this.encryptionKey(),
+      Buffer.from(payload.iv, 'base64'),
+    );
+    decipher.setAuthTag(Buffer.from(payload.authTag, 'base64'));
+    const clear = Buffer.concat([
+      decipher.update(Buffer.from(payload.ciphertext, 'base64')),
+      decipher.final(),
+    ]).toString('utf8');
+    const parsed = JSON.parse(clear);
+    const clean: KeyMap = {};
+    for (const id of PROVIDER_IDS) {
+      if (typeof parsed[id] === 'string') clean[id] = parsed[id];
     }
+    return clean;
+  }
+
+  private loadData(): StoredProviderData {
+    const defaults: StoredProviderData = {
+      activeProvider: 'gemini',
+      activeModel: DEFAULT_MODELS.gemini,
+      keys: { gemini: process.env.GEMINI_API_KEY || '' },
+      selectedModels: { ...DEFAULT_MODELS },
+    };
+
+    try {
+      if (!fs.existsSync(KEYS_FILE)) return defaults;
+      const parsed = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'));
+      let keys: KeyMap = {};
+      if (parsed.encryptedKeys) {
+        try {
+          keys = this.decryptKeys(parsed.encryptedKeys as EncryptedKeyPayload);
+        } catch (error) {
+          throw new Error(`Unable to decrypt saved provider keys. Verify CHLOE_ENCRYPTION_KEY. ${(error as Error).message}`);
+        }
+      } else if (parsed.keys && typeof parsed.keys === 'object') {
+        // Backward compatibility. The constructor migrates this file when encryption is configured.
+        this.legacyPlaintextLoaded = Object.values(parsed.keys).some((value) => typeof value === 'string' && value.length > 0);
+        keys = parsed.keys;
+      }
+      return {
+        activeProvider: isProviderId(parsed.activeProvider) ? parsed.activeProvider : defaults.activeProvider,
+        activeModel: typeof parsed.activeModel === 'string' ? parsed.activeModel : defaults.activeModel,
+        keys,
+        selectedModels: { ...DEFAULT_MODELS, ...(parsed.selectedModels || {}) },
+      };
+    } catch (error) {
+      const message = String((error as Error)?.message || error);
+      if (message.includes('CHLOE_ENCRYPTION_KEY')) throw error;
+      console.error('[CHLOE AI] Could not load provider configuration:', message);
+      return defaults;
+    }
+  }
+
+  private saveData(): void {
+    const encryptedKeys = this.encryptKeys(this.data.keys);
+    fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+    const persisted = {
+      activeProvider: this.data.activeProvider,
+      activeModel: this.data.activeModel,
+      selectedModels: this.data.selectedModels,
+      encryptedKeys,
+    };
+    fs.writeFileSync(KEYS_FILE, JSON.stringify(persisted, null, 2), { encoding: 'utf8', mode: 0o600 });
+    try { fs.chmodSync(KEYS_FILE, 0o600); } catch { /* Some deployment filesystems do not support chmod. */ }
   }
 
   private maskKey(key?: string): string {
     if (!key) return '';
     const clean = key.trim();
     if (clean.length <= 8) return '••••••••';
-    return clean.substring(0, 4) + '••••••••' + clean.substring(clean.length - 4);
+    return `${clean.substring(0, 4)}••••••••${clean.substring(clean.length - 4)}`;
   }
 
-  public getProvidersInfo(): {
-    activeProvider: AIProviderId;
-    activeModel: string;
-    providers: AIProviderConfig[];
-  } {
-    const list: AIProviderConfig[] = (['gemini', 'openai', 'nvidia', 'openrouter'] as AIProviderId[]).map(id => {
+  public getProvidersInfo(): { activeProvider: AIProviderId; activeModel: string; providers: AIProviderConfig[] } {
+    const providers: AIProviderConfig[] = PROVIDER_IDS.map((id) => {
       const meta = PROVIDER_METADATA[id];
-      const key = this.data.keys[id] || (id === 'gemini' ? process.env.GEMINI_API_KEY : '');
-      const hasKey = !!(key && key.trim().length > 5);
+      const key = this.getKey(id);
+      const hasKey = key.length > 5;
       return {
-        id,
-        name: meta.name,
-        endpoint: meta.endpoint,
-        description: meta.description,
-        keyUrl: meta.keyUrl,
-        hasKey,
-        maskedKey: this.maskKey(key),
-        status: hasKey ? 'connected' : 'not_configured',
+        id, name: meta.name, endpoint: meta.endpoint, description: meta.description,
+        keyUrl: meta.keyUrl, hasKey, maskedKey: this.maskKey(key),
+        status: hasKey ? 'configured_untested' : 'not_configured',
         models: meta.models,
         selectedModel: this.data.selectedModels[id] || DEFAULT_MODELS[id],
       };
     });
-
-    return {
-      activeProvider: this.data.activeProvider,
-      activeModel: this.data.activeModel,
-      providers: list,
-    };
+    return { activeProvider: this.data.activeProvider, activeModel: this.data.activeModel, providers };
   }
 
-  public setProviderKey(id: AIProviderId, key: string): { success: boolean; maskedKey: string } {
-    this.data.keys[id] = key.trim();
-    this.saveData();
-    return {
-      success: true,
-      maskedKey: this.maskKey(key),
-    };
+  public setProviderKey(id: AIProviderId, key: string): { success: true; maskedKey: string } {
+    if (!isProviderId(id)) throw new Error('Fournisseur inconnu.');
+    const clean = key.trim();
+    if (clean.length < 8 || clean.length > 2048) throw new Error('La clé API semble invalide (longueur incorrecte).');
+    this.data.keys[id] = clean;
+    this.saveData(); // Throws on disk/encryption errors: never report a false success.
+    return { success: true, maskedKey: this.maskKey(clean) };
   }
 
-  public removeProviderKey(id: AIProviderId): { success: boolean } {
+  public removeProviderKey(id: AIProviderId): { success: true } {
+    if (!isProviderId(id)) throw new Error('Fournisseur inconnu.');
     delete this.data.keys[id];
+    if (this.data.activeProvider === id) {
+      this.data.activeProvider = 'gemini';
+      this.data.activeModel = this.data.selectedModels.gemini || DEFAULT_MODELS.gemini;
+    }
     this.saveData();
     return { success: true };
   }
 
   public setActiveProvider(id: AIProviderId, model?: string): void {
+    if (!isProviderId(id)) throw new Error('Fournisseur inconnu.');
+    if (id !== 'gemini' && !this.getKey(id)) throw new Error(`Aucune clé API configurée pour ${PROVIDER_METADATA[id].name}.`);
     this.data.activeProvider = id;
-    if (model) {
-      this.data.selectedModels[id] = model;
-      this.data.activeModel = model;
-    } else {
-      this.data.activeModel = this.data.selectedModels[id] || DEFAULT_MODELS[id];
-    }
+    if (model) this.setProviderModel(id, model);
+    else this.data.activeModel = this.data.selectedModels[id] || DEFAULT_MODELS[id];
     this.saveData();
   }
 
   public setProviderModel(id: AIProviderId, model: string): void {
-    this.data.selectedModels[id] = model;
-    if (this.data.activeProvider === id) {
-      this.data.activeModel = model;
-    }
+    if (!isProviderId(id)) throw new Error('Fournisseur inconnu.');
+    const cleanModel = String(model || '').trim();
+    if (!cleanModel || cleanModel.length > 200) throw new Error('Nom de modèle invalide.');
+    this.data.selectedModels[id] = cleanModel;
+    if (this.data.activeProvider === id) this.data.activeModel = cleanModel;
     this.saveData();
   }
 
   public getKey(id: AIProviderId): string {
-    const k = this.data.keys[id];
-    if (k && k.trim()) return k.trim();
-    if (id === 'gemini') return process.env.GEMINI_API_KEY || '';
-    if (id === 'openai') return process.env.OPENAI_API_KEY || '';
-    if (id === 'nvidia') return process.env.NVIDIA_API_KEY || '';
-    if (id === 'openrouter') return process.env.OPENROUTER_API_KEY || '';
-    return '';
+    const stored = this.data.keys[id];
+    if (stored?.trim()) return stored.trim();
+    const envName = `${id.toUpperCase()}_API_KEY`;
+    return process.env[envName]?.trim() || '';
   }
 
-  public getAvailableAlternativeProvider(): AIProviderId | null {
-    const list: AIProviderId[] = ['openai', 'nvidia', 'openrouter'];
-    for (const p of list) {
-      if (this.getKey(p)) return p;
+  public getAvailableAlternativeProvider(exclude?: AIProviderId): AIProviderId | null {
+    const order: AIProviderId[] = ['openai', 'nvidia', 'openrouter'];
+    return order.find((id) => id !== exclude && !!this.getKey(id)) || null;
+  }
+
+  private isAuthenticationError(error: unknown): boolean {
+    const status = errorStatus(error);
+    return status === 401 || status === 403;
+  }
+
+  private isRetryableError(error: unknown): boolean {
+    const status = errorStatus(error);
+    if (status === 401 || status === 403) return false;
+    if (status === 408 || status === 429 || (status !== undefined && status >= 500)) return true;
+    return /timeout|timed out|aborted|ECONNRESET|EAI_AGAIN|network|fetch failed/i.test(String((error as any)?.message || error));
+  }
+
+  public async generateWithFailover(params: {
+    provider: AIProviderId;
+    systemPrompt: string;
+    messages: { role: 'user' | 'assistant' | 'system'; content: string }[];
+    image?: string;
+  }): Promise<{ text: string; providerUsed: AIProviderId; modelUsed: string; fallbackCount: number }> {
+    const order: AIProviderId[] = [params.provider, 'openai', 'nvidia', 'openrouter'];
+    const candidates = [...new Set(order)].filter((id) => id !== 'gemini' && !!this.getKey(id));
+    if (!candidates.length) throw new Error('Aucun fournisseur externe avec une clé API configurée.');
+
+    let lastError: unknown;
+    for (let index = 0; index < candidates.length; index++) {
+      const provider = candidates[index];
+      try {
+        const result = await this.generateChatCompletion({ ...params, provider });
+        const fallbackCount = provider === params.provider ? 0 : Math.max(1, index);
+        return { ...result, fallbackCount };
+      } catch (error) {
+        lastError = error;
+        // Invalid credentials/permissions must remain visible; do not hide them by trying another key.
+        if (this.isAuthenticationError(error) || !this.isRetryableError(error)) throw error;
+        console.warn(`[CHLOE AI] ${provider} failed temporarily; trying the next configured provider.`);
+      }
     }
-    return null;
+    throw lastError instanceof Error ? lastError : new Error('Tous les fournisseurs IA configurés ont échoué.');
   }
 
   public async testProvider(id: AIProviderId): Promise<{ success: boolean; message: string; latencyMs: number }> {
+    if (!isProviderId(id)) return { success: false, message: 'Fournisseur inconnu.', latencyMs: 0 };
     const key = this.getKey(id);
-    if (!key) {
-      return { success: false, message: `Aucune clé API configurée pour ${PROVIDER_METADATA[id].name}.`, latencyMs: 0 };
-    }
+    if (!key) return { success: false, message: `Aucune clé API configurée pour ${PROVIDER_METADATA[id].name}.`, latencyMs: 0 };
+    const started = Date.now();
 
-    const start = Date.now();
     try {
       if (id === 'gemini') {
         const g = new GoogleGenAI({ apiKey: key });
-        const res = await g.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: 'Réponds uniquement "OK".',
-        });
-        const lat = Date.now() - start;
-        return {
-          success: true,
-          message: `Connexion Google Gemini réussie (${lat}ms). Modèle actif: gemini-3.8-flash.`,
-          latencyMs: lat,
-        };
+        await g.models.generateContent({ model: this.data.selectedModels.gemini || DEFAULT_MODELS.gemini, contents: 'Réponds uniquement OK.' });
+        return { success: true, message: `Connexion Google Gemini testée (${Date.now() - started} ms).`, latencyMs: Date.now() - started };
       }
 
-      let endpoint = '';
-      let testModel = '';
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-      };
-
-      if (id === 'openai') {
-        endpoint = 'https://api.openai.com/v1/chat/completions';
-        testModel = 'gpt-4o-mini';
-      } else if (id === 'nvidia') {
-        endpoint = 'https://integrate.api.nvidia.com/v1/chat/completions';
-        testModel = 'meta/llama-3.3-70b-instruct';
-      } else if (id === 'openrouter') {
-        endpoint = 'https://openrouter.ai/api/v1/chat/completions';
-        testModel = 'deepseek/deepseek-r1';
+      const config = {
+        openai: { endpoint: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini' },
+        nvidia: { endpoint: 'https://integrate.api.nvidia.com/v1/chat/completions', model: 'meta/llama-3.3-70b-instruct' },
+        openrouter: { endpoint: 'https://openrouter.ai/api/v1/chat/completions', model: 'deepseek/deepseek-r1' },
+      }[id];
+      const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
+      if (id === 'openrouter') {
         headers['HTTP-Referer'] = 'https://chloe.ai';
-        headers['X-Title'] = 'CHLOE AI Personal Assistant';
+        headers['X-Title'] = 'CHLOE AI';
       }
-
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 6000);
-
-      const resp = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: testModel,
-          messages: [{ role: 'user', content: 'Ping. Réponds "PONG".' }],
-          max_tokens: 10,
-        }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-      const lat = Date.now() - start;
-
-      if (!resp.ok) {
-        const errText = await resp.text();
-        return {
-          success: false,
-          message: `Erreur HTTP ${resp.status} de ${PROVIDER_METADATA[id].name} : ${errText.substring(0, 100)}`,
-          latencyMs: lat,
-        };
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      let response: Response;
+      try {
+        response = await fetch(config.endpoint, {
+          method: 'POST', headers,
+          body: JSON.stringify({ model: config.model, messages: [{ role: 'user', content: 'Réponds uniquement PONG.' }], max_tokens: 10 }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
       }
-
-      const data = await resp.json();
-      const reply = data.choices?.[0]?.message?.content || 'OK';
-      return {
-        success: true,
-        message: `Connexion ${PROVIDER_METADATA[id].name} réussie (${lat}ms). Réponse : "${reply.trim().substring(0, 30)}".`,
-        latencyMs: lat,
-      };
-    } catch (e: any) {
-      const lat = Date.now() - start;
-      return {
-        success: false,
-        message: `Échec du test ${PROVIDER_METADATA[id].name} : ${e.message || 'Délai d’attente dépassé.'}`,
-        latencyMs: lat,
-      };
+      const latencyMs = Date.now() - started;
+      if (!response.ok) {
+        const details = (await response.text()).slice(0, 120);
+        return { success: false, message: `${PROVIDER_METADATA[id].name} : HTTP ${response.status} — ${details}`, latencyMs };
+      }
+      return { success: true, message: `Connexion ${PROVIDER_METADATA[id].name} vérifiée (${latencyMs} ms).`, latencyMs };
+    } catch (error) {
+      return { success: false, message: `Échec du test ${PROVIDER_METADATA[id].name} : ${(error as Error).message || 'erreur réseau'}`, latencyMs: Date.now() - started };
     }
   }
 
   public async generateChatCompletion(params: {
+    provider: AIProviderId;
     systemPrompt: string;
     messages: { role: 'user' | 'assistant' | 'system'; content: string }[];
     image?: string;
   }): Promise<{ text: string; providerUsed: AIProviderId; modelUsed: string }> {
-    const provider = this.data.activeProvider || 'gemini';
+    const provider = params.provider;
+    if (!isProviderId(provider) || provider === 'gemini') throw new Error('Le fournisseur demandé ne correspond pas à une API compatible OpenAI.');
     const key = this.getKey(provider);
+    if (!key) throw new Error(`Aucune clé API configurée pour ${PROVIDER_METADATA[provider].name}.`);
     const model = this.data.selectedModels[provider] || DEFAULT_MODELS[provider];
-
-    // If active provider is gemini, handled by standard gemini service or fallback
-    if (provider === 'gemini' || !key) {
-      return {
-        text: '',
-        providerUsed: 'gemini',
-        modelUsed: model,
-      };
-    }
-
-    let endpoint = '';
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
+    const endpoints: Record<Exclude<AIProviderId, 'gemini'>, string> = {
+      openai: 'https://api.openai.com/v1/chat/completions',
+      nvidia: 'https://integrate.api.nvidia.com/v1/chat/completions',
+      openrouter: 'https://openrouter.ai/api/v1/chat/completions',
     };
-
-    if (provider === 'openai') {
-      endpoint = 'https://api.openai.com/v1/chat/completions';
-    } else if (provider === 'nvidia') {
-      endpoint = 'https://integrate.api.nvidia.com/v1/chat/completions';
-    } else if (provider === 'openrouter') {
-      endpoint = 'https://openrouter.ai/api/v1/chat/completions';
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
+    if (provider === 'openrouter') {
       headers['HTTP-Referer'] = 'https://chloe.ai';
       headers['X-Title'] = 'CHLOE AI';
     }
 
     const formattedMessages: any[] = [{ role: 'system', content: params.systemPrompt }];
-    for (const m of params.messages) {
-      if (params.image && m.role === 'user' && m === params.messages[params.messages.length - 1]) {
+    params.messages.forEach((message, index) => {
+      if (params.image && message.role === 'user' && index === params.messages.length - 1) {
         formattedMessages.push({
           role: 'user',
           content: [
-            { type: 'text', text: m.content },
+            { type: 'text', text: message.content },
             { type: 'image_url', image_url: { url: params.image } },
           ],
         });
       } else {
-        formattedMessages.push({ role: m.role, content: m.content });
+        formattedMessages.push({ role: message.role, content: message.content });
       }
-    }
+    });
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20000);
-
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model,
-        messages: formattedMessages,
-        temperature: 0.7,
-        max_tokens: 1500,
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
-
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Erreur ${PROVIDER_METADATA[provider].name} (${res.status}): ${err.substring(0, 150)}`);
+    let response: Response;
+    try {
+      response = await fetch(endpoints[provider], {
+        method: 'POST', headers,
+        body: JSON.stringify({ model, messages: formattedMessages, temperature: 0.7, max_tokens: 1500 }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
     }
 
-    const json = await res.json();
-    const text = json.choices?.[0]?.message?.content || '';
-    return {
-      text,
-      providerUsed: provider,
-      modelUsed: model,
-    };
+    if (!response.ok) {
+      const details = (await response.text()).slice(0, 300);
+      const error = new Error(`${PROVIDER_METADATA[provider].name} HTTP ${response.status}: ${details}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+
+    const json = await response.json();
+    const content = json.choices?.[0]?.message?.content;
+    const text = typeof content === 'string'
+      ? content
+      : Array.isArray(content) ? content.map((part: any) => part?.text || '').join('\n') : '';
+    if (!text.trim()) throw new Error(`${PROVIDER_METADATA[provider].name} a renvoyé une réponse vide.`);
+    return { text, providerUsed: provider, modelUsed: model };
   }
 }
 

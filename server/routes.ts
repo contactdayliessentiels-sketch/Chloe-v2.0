@@ -91,7 +91,8 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
     if (activeProv !== 'gemini' && providerManager.getKey(activeProv)) {
       try {
         const systemInstruction = buildChloeSystemInstruction(settings, db.getMemories(userId), db.getSkills());
-        const completion = await providerManager.generateChatCompletion({
+        const completion = await providerManager.generateWithFailover({
+          provider: activeProv,
           systemPrompt: systemInstruction,
           messages: [{ role: 'user', content: message || 'Analyse cette image' }],
           image,
@@ -108,11 +109,12 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
             },
             userId
           );
-          db.log(userId, specializedAgent.toUpperCase(), `Réponse générée via ${provInfo.activeProvider} (${completion.modelUsed})`, 'LEVEL_1_CONSULTATION', 'success', `Tokens estimés : 250`);
+          db.log(userId, specializedAgent.toUpperCase(), `Réponse générée via ${completion.providerUsed} (${completion.modelUsed})`, 'LEVEL_1_CONSULTATION', 'success', `Secours utilisés : ${completion.fallbackCount}`);
           return res.json(assistantMsg);
         }
       } catch (err: any) {
-        console.warn(`Fallback sur Gemini ou local suite à erreur ${activeProv}:`, err.message);
+        if (/HTTP 401|HTTP 403|Erreur 401|Erreur 403/.test(String(err?.message || err))) throw err;
+        console.warn(`Fournisseurs externes indisponibles, tentative Gemini:`, err.message);
       }
     }
 
@@ -245,45 +247,44 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
     console.error('Chat error:', error);
     const userId = getUserId(req);
     const errStr = error.message || String(error);
-    const is429 = /429|quota|RESOURCE_EXHAUSTED/i.test(errStr);
+    const isAuthenticationFailure = /(?:HTTP|Erreur)\s*(?:401|403)/i.test(errStr);
+    const isTransientProviderFailure = !isAuthenticationFailure && /429|408|5\d\d|quota|RESOURCE_EXHAUSTED|timeout|timed out|aborted|ECONNRESET|EAI_AGAIN|network|fetch failed/i.test(errStr);
 
-    // 1. Try automatic failover to another configured provider if 429 quota exhaustion occurred
-    if (is429) {
-      const altProvider = providerManager.getAvailableAlternativeProvider();
-      if (altProvider) {
-        try {
-          const settings = db.getSettings();
-          const systemInstruction = buildChloeSystemInstruction(settings, db.getMemories(userId), db.getSkills());
-          const completion = await providerManager.generateChatCompletion({
-            systemPrompt: systemInstruction,
-            messages: [{ role: 'user', content: req.body?.message || 'Bonjour' }],
-            image: req.body?.image,
-          });
+    // Automatic failover from Gemini to a configured OpenAI/NVIDIA/OpenRouter provider.
+    if (isTransientProviderFailure) {
+      try {
+        const settings = db.getSettings();
+        const systemInstruction = buildChloeSystemInstruction(settings, db.getMemories(userId), db.getSkills());
+        const completion = await providerManager.generateWithFailover({
+          provider: 'gemini',
+          systemPrompt: systemInstruction,
+          messages: [{ role: 'user', content: req.body?.message || 'Bonjour' }],
+          image: req.body?.image,
+        });
 
-          if (completion.text) {
-            db.log(userId, 'BASCULE_AUTO', `Quota Gemini atteint. Bascule automatique vers ${altProvider} (${completion.modelUsed})`, 'LEVEL_1_CONSULTATION', 'success', 'Continuité assurée');
-            const assistantMsg = db.addMessage(
-              req.body?.conversationId,
-              {
-                role: 'assistant',
-                content: `${completion.text}\n\n*(⚡ Note : Quota Gemini temporairement épuisé. Réponse assurée via ${altProvider.toUpperCase()}).*`,
-              },
-              userId
-            );
-            return res.json(assistantMsg);
-          }
-        } catch (failoverErr: any) {
-          console.warn('Failover provider error:', failoverErr.message);
+        if (completion.text) {
+          db.log(userId, 'BASCULE_AUTO', `Secours automatique vers ${completion.providerUsed} (${completion.modelUsed})`, 'LEVEL_1_CONSULTATION', 'success', `Fournisseurs de secours utilisés : ${completion.fallbackCount}`);
+          const assistantMsg = db.addMessage(
+            req.body?.conversationId,
+            {
+              role: 'assistant',
+              content: `${completion.text}\n\n*(⚡ Réponse assurée via ${completion.providerUsed.toUpperCase()} après indisponibilité temporaire du moteur principal.)*`,
+            },
+            userId
+          );
+          return res.json(assistantMsg);
         }
+      } catch (failoverErr: any) {
+        console.warn('Failover providers error:', failoverErr.message);
       }
 
-      // 2. If no alternative provider or failover failed, respond with a helpful assistant message
-      db.log(userId, 'ORCHESTRATEUR', 'Quota Gemini dépassé (429 RESOURCE_EXHAUSTED)', 'LEVEL_1_CONSULTATION', 'warning', 'Quota atteint');
+      // No configured provider could complete the request. Do not claim a successful fallback.
+      db.log(userId, 'ORCHESTRATEUR', 'Tous les fournisseurs IA configurés sont temporairement indisponibles', 'LEVEL_1_CONSULTATION', 'warning', errStr);
       const quotaReply = db.addMessage(
         req.body?.conversationId,
         {
           role: 'assistant',
-          content: `⚠️ **Limite de quota atteinte sur Google Gemini (Erreur 429 - Limite temporaire)**\n\nLe quota gratuit de votre clé Google Gemini actuelle a été temporairement dépassé.\n\n💡 **Solutions immédiates :**\n1. Rendez-vous dans **Paramètres > Fournisseurs d'IA & Clés API**.\n2. Saisissez l'une de vos autres clés API :\n   - **OpenAI** (GPT-4o / o3-mini)\n   - **NVIDIA NIM** (build.nvidia.com)\n   - **OpenRouter** (openrouter.ai)\n3. Cliquez sur **Activer ce moteur** pour continuer vos échanges sans interruption.\n4. Ou patientez quelques minutes le temps que Google réinitialise votre quota.\n\nToutes vos conversations et mémoires sont préservées !`,
+          content: `⚠️ **Le moteur IA principal est momentanément indisponible**\n\nLe service peut être en quota, en maintenance ou rencontrer une erreur réseau/serveur.\n\n💡 **Solutions immédiates :**\n1. Rendez-vous dans **Paramètres > Fournisseurs d'IA & Clés API**.\n2. Saisissez l'une de vos autres clés API :\n   - **OpenAI** (GPT-4o / o3-mini)\n   - **NVIDIA NIM** (build.nvidia.com)\n   - **OpenRouter** (openrouter.ai)\n3. Cliquez sur **Activer ce moteur** pour continuer vos échanges sans interruption.\n4. Réessayez dans quelques minutes ou vérifiez le statut du fournisseur sélectionné.\n\nToutes vos conversations et mémoires sont préservées !`,
         },
         userId
       );
@@ -747,8 +748,12 @@ apiRouter.post('/providers/key', (req: Request, res: Response) => {
   if (!id || typeof key !== 'string') {
     return res.status(400).json({ error: 'Fournisseur ou clé manquant.' });
   }
-  const result = providerManager.setProviderKey(id, key);
-  res.json(result);
+  try {
+    const result = providerManager.setProviderKey(id, key);
+    res.json(result);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'La clé API n’a pas pu être sauvegardée.' });
+  }
 });
 
 apiRouter.delete('/providers/key/:id', (req: Request, res: Response) => {
@@ -760,8 +765,23 @@ apiRouter.delete('/providers/key/:id', (req: Request, res: Response) => {
 apiRouter.post('/providers/select', (req: Request, res: Response) => {
   const { id, model } = req.body;
   if (!id) return res.status(400).json({ error: 'Fournisseur manquant.' });
-  providerManager.setActiveProvider(id, model);
-  res.json(providerManager.getProvidersInfo());
+  try {
+    providerManager.setActiveProvider(id, model);
+    res.json(providerManager.getProvidersInfo());
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Impossible de sélectionner ce fournisseur.' });
+  }
+});
+
+apiRouter.post('/providers/model', (req: Request, res: Response) => {
+  const { id, model } = req.body;
+  if (!id || !model) return res.status(400).json({ error: 'Fournisseur et modèle requis.' });
+  try {
+    providerManager.setProviderModel(id, model);
+    res.json(providerManager.getProvidersInfo());
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || 'Impossible de modifier le modèle.' });
+  }
 });
 
 apiRouter.post('/providers/test', async (req: Request, res: Response) => {

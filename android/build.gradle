@@ -22,11 +22,19 @@ allprojects {
         google()
         mavenCentral()
     }
-    configurations.all {
-        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
-        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+}
+
+// Resolve older Kotlin stdlib/jdk7/jdk8 transitive artifacts consistently.
+subprojects {
+    configurations.configureEach {
+        resolutionStrategy.force(
+            'org.jetbrains.kotlin:kotlin-stdlib:1.8.22',
+            'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22',
+            'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+        )
     }
 }
+
 
 tasks.register('clean', Delete) {
     delete rootProject.layout.buildDirectory

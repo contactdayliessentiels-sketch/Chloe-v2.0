@@ -268,7 +268,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
               title="Espace de tests et validation"
             >
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Tests 20/20</span>
+              <span>Tests & validation</span>
             </button>
           </div>
         </div>
@@ -296,8 +296,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
       {/* Main Conversation & Avatar Composition Area */}
       <div className="flex-1 relative flex overflow-hidden">
         {/* Background Presence (Default on mobile and hybrid layouts) */}
-        {!isSideModeActive && avatar.preferences.enabled && (
-          <div className="absolute inset-0 z-0 pointer-events-none flex items-end justify-center pb-12 sm:pb-16 overflow-hidden">
+        {avatar.preferences.enabled && (
+          <div className={`absolute inset-0 z-0 pointer-events-none flex items-end justify-center pb-12 sm:pb-16 overflow-hidden ${isSideModeActive ? 'md:hidden' : ''}`}>
             <AvatarPresence
               state={avatar.state}
               preferences={avatar.preferences}

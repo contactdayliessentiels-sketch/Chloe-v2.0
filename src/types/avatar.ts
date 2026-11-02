@@ -28,9 +28,9 @@ export interface AvatarPreferences {
 
 export const DEFAULT_AVATAR_PREFERENCES: AvatarPreferences = {
   enabled: true,
-  size: 'medium',
+  size: 'large',
   position: 'center',
-  visibility: 'normal',
+  visibility: 'high',
   mode: 'hybrid',
   animated: true,
   intensity: 'normal',
