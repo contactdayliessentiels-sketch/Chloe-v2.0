@@ -56,6 +56,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const [expandedTools, setExpandedTools] = useState<Record<string, boolean>>({});
   const [isAvatarControlsOpen, setIsAvatarControlsOpen] = useState(false);
 
+  const messageList = Array.isArray(messages) ? messages : [];
+  const approvalList = Array.isArray(approvals) ? approvals : [];
+
   // Hook for avatar virtual presence synchronization
   const avatar = useAvatarState({
     isListening,
@@ -76,7 +79,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, loading]);
+  }, [messageList.length, loading]);
 
   // Speech Recognition setup (Web Speech API)
   useEffect(() => {
@@ -274,7 +277,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
         </div>
 
         {/* Pending approvals alert badge */}
-        {approvals.filter(a => a.status === 'pending').length > 0 && (
+        {approvalList.filter(a => a.status === 'pending').length > 0 && (
           <div className="mt-2 p-2 rounded-xl bg-amber-950/30 border border-amber-500/40 flex items-center justify-between text-xs text-amber-200">
             <div className="flex items-center gap-2">
               <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
@@ -282,7 +285,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             </div>
             <button
               onClick={() => {
-                const pending = approvals.find(a => a.status === 'pending');
+                const pending = approvalList.find(a => a.status === 'pending');
                 if (pending) onOpenApproval(pending);
               }}
               className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold px-2 py-0.5 rounded text-[11px] transition-colors"
@@ -326,7 +329,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
         {/* Message Stream (Foreground Layer) */}
         <div className="flex-1 overflow-y-auto px-3.5 sm:px-4 py-4 space-y-4 relative z-10">
-          {messages.length === 0 && (
+          {messageList.length === 0 && (
             <div className="flex flex-col items-center justify-center min-h-[50vh] text-center p-6 space-y-3">
               <div className="w-16 h-16 rounded-3xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shadow-xl shadow-purple-950/50">
                 <Sparkles className="w-8 h-8" />
@@ -356,7 +359,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             </div>
           )}
 
-          {messages.map(msg => {
+          {messageList.map(msg => {
             const isUser = msg.role === 'user';
             const isExpanded = !!expandedTools[msg.id];
 
@@ -473,7 +476,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                       <div className="mt-3 pt-2">
                         <button
                           onClick={() => {
-                            const a = approvals.find(x => x.id === msg.approvalId);
+                            const a = approvalList.find(x => x.id === msg.approvalId);
                             if (a) onOpenApproval(a);
                           }}
                           className="w-full py-1.5 px-3 rounded-lg bg-amber-500/20 border border-amber-500/40 hover:bg-amber-500/30 text-amber-300 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
@@ -486,7 +489,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
                     {/* Actions Bar (Voice synthesis, timestamp) */}
                     <div className="mt-2 flex items-center justify-between text-[10px] text-slate-400 pt-1">
-                      <span>{new Date(msg.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span>{msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : 'À l’instant'}</span>
 
                       {!isUser && (
                         <button

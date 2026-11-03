@@ -3,18 +3,37 @@ import { db, OWNER_USER_ID } from './db.ts';
 import { searchDocumentChunks } from './rag.ts';
 import { DocumentChunk } from '../shared/types.ts';
 
-const apiKey = process.env.GEMINI_API_KEY;
+import { providerManager } from './providers.ts';
 
-export const ai = apiKey
-  ? new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
+export function getGeminiApiKey(): string {
+  return providerManager.getKey('gemini') || process.env.GEMINI_API_KEY || '';
+}
+
+export function getGeminiClient(): GoogleGenAI | null {
+  const key = getGeminiApiKey();
+  if (!key) return null;
+  return new GoogleGenAI({
+    apiKey: key,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
       },
-    })
-  : null;
+    },
+  });
+}
+
+export function hasGeminiKey(): boolean {
+  return !!getGeminiApiKey();
+}
+
+// Proxy getter for compatibility so existing calls to ai.models work dynamically
+export const ai: any = new Proxy({} as any, {
+  get(_target, prop) {
+    const client = getGeminiClient();
+    if (!client) return undefined;
+    return (client as any)[prop];
+  },
+});
 
 export const CHLOE_TOOLS: { functionDeclarations: FunctionDeclaration[] } = {
   functionDeclarations: [

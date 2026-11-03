@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { db, OWNER_USER_ID } from './db.ts';
-import { ai, CHLOE_TOOLS, executeToolCall, buildChloeSystemInstruction } from './gemini.ts';
+import { ai, getGeminiClient, hasGeminiKey, CHLOE_TOOLS, executeToolCall, buildChloeSystemInstruction } from './gemini.ts';
 import { agentCoordinator } from './agents.ts';
 import { runAllTests } from './tests.ts';
 import { AgentId } from '../shared/types.ts';
@@ -86,8 +86,9 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
 
     const provInfo = providerManager.getProvidersInfo();
     const activeProv = provInfo.activeProvider;
+    const hasAnyConfiguredKey = provInfo.providers.some(p => p.hasKey);
 
-    // Check if an external provider (OpenAI, NVIDIA NIM, OpenRouter) is active with a valid key
+    // If an external provider (OpenAI, NVIDIA NIM, OpenRouter) is active with a valid key
     if (activeProv !== 'gemini' && providerManager.getKey(activeProv)) {
       try {
         const systemInstruction = buildChloeSystemInstruction(settings, db.getMemories(userId), db.getSkills());
@@ -114,16 +115,51 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
         }
       } catch (err: any) {
         if (/HTTP 401|HTTP 403|Erreur 401|Erreur 403/.test(String(err?.message || err))) throw err;
-        console.warn(`Fournisseurs externes indisponibles, tentative Gemini:`, err.message);
+        console.warn(`Fournisseur ${activeProv} indisponible, tentative avec le secours:`, err.message);
       }
     }
 
-    if (!ai) {
+    const geminiClient = getGeminiClient();
+
+    // If Gemini client cannot be initialized (no Gemini key)
+    if (!geminiClient) {
+      // If another provider has a valid key, run it with failover router!
+      if (hasAnyConfiguredKey) {
+        try {
+          const systemInstruction = buildChloeSystemInstruction(settings, db.getMemories(userId), db.getSkills());
+          const availableProvider = provInfo.providers.find(p => p.hasKey)?.id || 'openai';
+          const completion = await providerManager.generateWithFailover({
+            provider: availableProvider,
+            systemPrompt: systemInstruction,
+            messages: [{ role: 'user', content: message || 'Bonjour' }],
+            image,
+          });
+
+          if (completion.text) {
+            db.recordUsage(250);
+            const assistantMsg = db.addMessage(
+              conversationId,
+              {
+                role: 'assistant',
+                content: `${completion.text}\n\n*(⚡ Traité via ${completion.providerUsed.toUpperCase()} [${completion.modelUsed}])*`,
+                agentInvolved: specializedAgent,
+              },
+              userId
+            );
+            db.log(userId, specializedAgent.toUpperCase(), `Réponse générée via ${completion.providerUsed}`, 'LEVEL_1_CONSULTATION', 'success', `Secours: ${completion.fallbackCount}`);
+            return res.json(assistantMsg);
+          }
+        } catch (failoverErr: any) {
+          if (/HTTP 401|HTTP 403|Erreur 401|Erreur 403/.test(String(failoverErr?.message || failoverErr))) throw failoverErr;
+        }
+      }
+
+      // No key configured for any provider
       const fallbackReply = db.addMessage(
         conversationId,
         {
           role: 'assistant',
-          content: `Bonjour ! Je suis **CHLOÉ AI**.\n\nVotre message a bien été reçu. Pour activer l'intelligence artificielle de CHLOÉ, vous pouvez configurer l'une de vos clés API dans les **Paramètres > Fournisseurs d'IA & Clés API** :\n\n- **Google Gemini** (gemini-3.8-flash, gemini-4-argon)\n- **OpenAI** (gpt-4o, o3-mini)\n- **NVIDIA NIM** (build.nvidia.com - Llama 3.3, Mistral, DeepSeek)\n- **OpenRouter** (openrouter.ai - Claude 3.5, DeepSeek R1)\n\nVotre environnement local (mémoire, documents, compétences et connecteurs) reste opérationnel sur votre Samsung Galaxy S24 !`,
+          content: `Bonjour ! Je suis **CHLOÉ AI**.\n\nVotre message a bien été reçu. Pour activer l'intelligence artificielle de CHLOÉ, configurez l'une de vos clés API dans les **Paramètres > Fournisseurs d'IA & Clés API** :\n\n- **Google Gemini** (gemini-3.8-flash, gemini-4-argon)\n- **OpenAI** (gpt-4o, o3-mini)\n- **NVIDIA NIM** (build.nvidia.com - Llama 3.3, Mistral, DeepSeek)\n- **OpenRouter** (openrouter.ai - Claude 3.5, DeepSeek R1)\n\nVos paramètres, compétences et mémoires sont sauvegardés en toute sécurité sur votre Samsung Galaxy S24.`,
           agentInvolved: specializedAgent,
         },
         userId
@@ -169,7 +205,7 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
 
     while (turns < maxTurns) {
       turns++;
-      const geminiResponse = await ai.models.generateContent({
+      const geminiResponse = await geminiClient.models.generateContent({
         model: settings.model || 'gemini-3.8-flash',
         contents: { parts },
         config: {
@@ -203,7 +239,7 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
 
           // Follow up to synthesize response
           if (!assistantReplyText) {
-            const followUp = await ai.models.generateContent({
+            const followUp = await geminiClient.models.generateContent({
               model: settings.model || 'gemini-3.8-flash',
               contents: [
                 { parts: [{ text: `Tu viens d'exécuter l'action ${call.name} avec le résultat : ${JSON.stringify(toolExec.result)}. Formule une réponse naturelle, concise et polie pour l'utilisateur sur Samsung Galaxy S24.` }] }
@@ -250,7 +286,14 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
     const isAuthenticationFailure = /(?:HTTP|Erreur)\s*(?:401|403)/i.test(errStr);
     const isTransientProviderFailure = !isAuthenticationFailure && /429|408|5\d\d|quota|RESOURCE_EXHAUSTED|timeout|timed out|aborted|ECONNRESET|EAI_AGAIN|network|fetch failed/i.test(errStr);
 
-    // Automatic failover from Gemini to a configured OpenAI/NVIDIA/OpenRouter provider.
+    if (isAuthenticationFailure) {
+      db.log(userId, 'SÉCURITÉ', 'Erreur d’authentification de clé API', 'LEVEL_1_CONSULTATION', 'error', errStr);
+      return res.status(401).json({
+        error: `Erreur d'authentification sur le fournisseur sélectionné (${errStr}). Veuillez vérifier et enregistrer une clé valide dans Paramètres > Fournisseurs d'IA.`
+      });
+    }
+
+    // Automatic failover to another configured provider (OpenAI/NVIDIA/OpenRouter/Gemini)
     if (isTransientProviderFailure) {
       try {
         const settings = db.getSettings();
@@ -264,11 +307,12 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
 
         if (completion.text) {
           db.log(userId, 'BASCULE_AUTO', `Secours automatique vers ${completion.providerUsed} (${completion.modelUsed})`, 'LEVEL_1_CONSULTATION', 'success', `Fournisseurs de secours utilisés : ${completion.fallbackCount}`);
+          const targetConvId = req.body?.conversationId || db.createConversation(userId).id;
           const assistantMsg = db.addMessage(
-            req.body?.conversationId,
+            targetConvId,
             {
               role: 'assistant',
-              content: `${completion.text}\n\n*(⚡ Réponse assurée via ${completion.providerUsed.toUpperCase()} après indisponibilité temporaire du moteur principal.)*`,
+              content: `${completion.text}\n\n*(⚡ Réponse assurée via ${completion.providerUsed.toUpperCase()} [${completion.modelUsed}] après basculement automatique.)*`,
             },
             userId
           );
@@ -278,13 +322,14 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
         console.warn('Failover providers error:', failoverErr.message);
       }
 
-      // No configured provider could complete the request. Do not claim a successful fallback.
+      // No configured provider could complete the request
       db.log(userId, 'ORCHESTRATEUR', 'Tous les fournisseurs IA configurés sont temporairement indisponibles', 'LEVEL_1_CONSULTATION', 'warning', errStr);
+      const targetConvId = req.body?.conversationId || db.createConversation(userId).id;
       const quotaReply = db.addMessage(
-        req.body?.conversationId,
+        targetConvId,
         {
           role: 'assistant',
-          content: `⚠️ **Le moteur IA principal est momentanément indisponible**\n\nLe service peut être en quota, en maintenance ou rencontrer une erreur réseau/serveur.\n\n💡 **Solutions immédiates :**\n1. Rendez-vous dans **Paramètres > Fournisseurs d'IA & Clés API**.\n2. Saisissez l'une de vos autres clés API :\n   - **OpenAI** (GPT-4o / o3-mini)\n   - **NVIDIA NIM** (build.nvidia.com)\n   - **OpenRouter** (openrouter.ai)\n3. Cliquez sur **Activer ce moteur** pour continuer vos échanges sans interruption.\n4. Réessayez dans quelques minutes ou vérifiez le statut du fournisseur sélectionné.\n\nToutes vos conversations et mémoires sont préservées !`,
+          content: `⚠️ **Le moteur IA principal est momentanément indisponible**\n\nErreur rencontrée : ${errStr}\n\n💡 **Solutions immédiates :**\n1. Rendez-vous dans **Paramètres > Fournisseurs d'IA & Clés API**.\n2. Saisissez l'une de vos autres clés API :\n   - **OpenAI** (GPT-4o / o3-mini)\n   - **NVIDIA NIM** (build.nvidia.com)\n   - **OpenRouter** (openrouter.ai)\n3. Cliquez sur **Activer ce moteur** pour continuer vos échanges sans interruption.\n\nToutes vos conversations et mémoires sont préservées !`,
         },
         userId
       );

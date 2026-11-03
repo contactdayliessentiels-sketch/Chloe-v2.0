@@ -42,6 +42,7 @@ import { AgentsView } from './components/AgentsView.tsx';
 import { TestsAdminView } from './components/TestsAdminView.tsx';
 import { ApprovalModal } from './components/ApprovalModal.tsx';
 import { AvatarProvider } from './context/AvatarContext.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('chat');
@@ -123,24 +124,33 @@ export default function App() {
         fetch('/api/mcp/servers').then(r => r.json()),
       ]);
 
-      setConversations(convsRes || []);
-      if (convsRes && convsRes.length > 0) {
-        setActiveConversationId(convsRes[0].id);
-        const msgs = await fetch(`/api/conversations/${convsRes[0].id}/messages`).then(r => r.json());
-        setMessages(msgs || []);
+      const safeConvs = Array.isArray(convsRes) ? convsRes : [];
+      setConversations(safeConvs);
+      if (safeConvs.length > 0) {
+        setActiveConversationId(safeConvs[0].id);
+        try {
+          const msgs = await fetch(`/api/conversations/${safeConvs[0].id}/messages`).then(r => r.json());
+          setMessages(Array.isArray(msgs) ? msgs : []);
+        } catch (msgErr) {
+          console.warn('Failed to load conversation messages:', msgErr);
+          setMessages([]);
+        }
+      } else {
+        setActiveConversationId('');
+        setMessages([]);
       }
-      setSkills(skillsRes || []);
-      setConnectors(connRes || []);
-      setMemories(memRes || []);
-      setDocuments(docsRes || []);
-      setAutomations(autoRes || []);
-      setApprovals(apprRes || []);
-      setLogs(logsRes || []);
-      setUsage(usageRes || usage);
-      setSettings(settingsRes || settings);
-      setTests(testsRes || []);
-      setAgents(agentsRes || []);
-      setMcpServers(mcpRes || []);
+      setSkills(Array.isArray(skillsRes) ? skillsRes : []);
+      setConnectors(Array.isArray(connRes) ? connRes : []);
+      setMemories(Array.isArray(memRes) ? memRes : []);
+      setDocuments(Array.isArray(docsRes) ? docsRes : []);
+      setAutomations(Array.isArray(autoRes) ? autoRes : []);
+      setApprovals(Array.isArray(apprRes) ? apprRes : []);
+      setLogs(Array.isArray(logsRes) ? logsRes : []);
+      setUsage(usageRes && typeof usageRes === 'object' ? usageRes : usage);
+      setSettings(settingsRes && typeof settingsRes === 'object' ? settingsRes : settings);
+      setTests(Array.isArray(testsRes) ? testsRes : []);
+      setAgents(Array.isArray(agentsRes) ? agentsRes : []);
+      setMcpServers(Array.isArray(mcpRes) ? mcpRes : []);
     } catch (err) {
       console.error('Failed to load initial data:', err);
     }
@@ -152,13 +162,16 @@ export default function App() {
 
   // Load messages when active conversation changes
   const switchConversation = async (convId: string) => {
+    if (!convId) return;
     setActiveConversationId(convId);
     try {
       const msgs = await fetch(`/api/conversations/${convId}/messages`).then(r => r.json());
-      setMessages(msgs || []);
+      setMessages(Array.isArray(msgs) ? msgs : []);
       setActiveTab('chat');
     } catch (err) {
       console.error('Failed to switch conversation:', err);
+      setMessages([]);
+      setActiveTab('chat');
     }
   };
 
