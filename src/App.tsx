@@ -41,7 +41,9 @@ import { UsageView } from './components/UsageView.tsx';
 import { AgentsView } from './components/AgentsView.tsx';
 import { TestsAdminView } from './components/TestsAdminView.tsx';
 import { ApprovalModal } from './components/ApprovalModal.tsx';
+import { AvatarView } from './components/AvatarView.tsx';
 import { AvatarProvider } from './context/AvatarContext.tsx';
+
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 
 export default function App() {
@@ -595,7 +597,12 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'avatar' && (
+          <AvatarView settings={settings} />
+        )}
+
         {activeTab === 'skills' && (
+
           <SkillsView
             skills={skills}
             onToggleSkill={handleToggleSkill}

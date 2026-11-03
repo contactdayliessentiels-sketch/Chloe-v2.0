@@ -1295,6 +1295,17 @@ class Database {
     return newMsg;
   }
 
+  public updateMessage(convId: string, msgId: string, updates: Partial<ChatMessage>): ChatMessage | undefined {
+    const msgs = this.data.messages[convId];
+    if (!msgs) return undefined;
+    const msg = msgs.find(m => m.id === msgId);
+    if (!msg) return undefined;
+    Object.assign(msg, updates);
+    this.save();
+    return msg;
+  }
+
+
   // Full export (RGPD)
   public exportAllUserData(userId: string = OWNER_USER_ID): Record<string, any> {
     const userConvs = this.getConversations(userId);

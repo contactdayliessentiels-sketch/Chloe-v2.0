@@ -11,9 +11,12 @@ import {
   WifiOff,
   Sparkles,
   Sliders,
-  Heart
+  Heart,
+  Image as ImageIcon
 } from 'lucide-react';
 import { ChloeAvatar3D } from './ChloeAvatar3D.tsx';
+import { ChloeAvatar } from './ChloeAvatar.tsx';
+
 
 interface AvatarPresenceProps {
   state: AvatarState;
@@ -22,6 +25,7 @@ interface AvatarPresenceProps {
   className?: string;
   isSidePanel?: boolean;
 }
+
 
 export const AvatarPresence: React.FC<AvatarPresenceProps> = ({
   state,
@@ -182,21 +186,50 @@ export const AvatarPresence: React.FC<AvatarPresenceProps> = ({
         {/* Outer Halo Rim behind the avatar */}
         <div className="absolute top-1/4 w-[280px] h-[340px] rounded-full bg-purple-600/15 blur-3xl pointer-events-none" />
 
-        {/* Living 3D Avatar (Head-to-Toe, Three.js WebGL with dynamic rig & lip-sync) */}
+        {/* Living Avatar: Three.js Fiber Pipeline, Canvas, or Official Photo */}
         <div
           className={`relative z-10 flex items-end justify-center pointer-events-auto ${getHeightStyle()} w-[340px] sm:w-[420px] max-w-[92vw]`}
           style={{
             transformOrigin: 'bottom center',
           }}
         >
-          <ChloeAvatar3D
-            state={state}
-            preferences={preferences}
-            isSpeaking={state === 'speaking'}
-            onTap={onOpenControls}
-            isSidePanel={isSidePanel}
-            className="w-full h-full"
-          />
+          {preferences.engine === 'photo' ? (
+            <div
+              onClick={onOpenControls}
+              className="relative w-full h-full flex items-end justify-center cursor-pointer group"
+            >
+              <img
+                src="/chloe-avatar-fullbody.webp"
+                alt="Chloé AI - Assistante Virtuelle"
+                className={`w-full h-full object-contain object-bottom drop-shadow-[0_12px_30px_rgba(168,85,247,0.45)] transition-transform duration-700 ${
+                  preferences.animated ? meta.animClass : ''
+                }`}
+                onError={(e) => {
+                  const target = e.currentTarget;
+                  if (!target.src.includes('chloe-avatar-fullbody_f3fa7d52.webp')) {
+                    target.src = '/assets/aistudio/chloe-avatar-fullbody_f3fa7d52.webp';
+                  }
+                }}
+              />
+            </div>
+          ) : preferences.engine === 'canvas' ? (
+            <ChloeAvatar3D
+              state={state}
+              preferences={preferences}
+              isSpeaking={state === 'speaking'}
+              onTap={onOpenControls}
+              isSidePanel={isSidePanel}
+              className="w-full h-full"
+            />
+          ) : (
+            <ChloeAvatar
+              interactive={isSidePanel}
+              showControls={isSidePanel}
+              onTap={onOpenControls}
+              showOfficialPhotoToggle={true}
+              className="w-full h-full"
+            />
+          )}
         </div>
 
         {/* Interactive Status Badge / Indicator (Allows quick tap to customize) */}

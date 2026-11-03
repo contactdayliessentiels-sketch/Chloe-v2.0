@@ -6,8 +6,11 @@ import { runAllTests } from './tests.ts';
 import { AgentId } from '../shared/types.ts';
 import { providerManager } from './providers.ts';
 import { mcpManager } from './mcp.ts';
+import { imageGenerationRouter } from './services/imageGeneration.ts';
+import { continuousLearningEngine } from './services/continuousLearning.ts';
 
 export const apiRouter = Router();
+
 
 // Middleware: Authenticate user session
 const getUserId = (req: Request): string => {
@@ -25,8 +28,42 @@ const getUserId = (req: Request): string => {
   return OWNER_USER_ID;
 };
 
+// Helper to analyze conversation context and enrich continuous learning skills
+const maybeLearnSkill = (
+  userMessage?: string,
+  assistantReply?: string,
+  convId?: string,
+  uId: string = OWNER_USER_ID,
+  targetMsg?: any
+) => {
+  try {
+    const settings = db.getSettings();
+    if (settings.continuousLearningEnabled === false) return;
+    if (!userMessage || !assistantReply) return;
+
+    const extracted = continuousLearningEngine.analyzeForSkill(userMessage, assistantReply);
+    if (extracted) {
+      const result = continuousLearningEngine.registerOrEnrichSkill(extracted, convId, uId);
+      if (targetMsg) {
+        targetMsg.learnedSkill = {
+          id: result.skill.id,
+          name: result.skill.name,
+          action: result.action,
+          summary: result.skill.description,
+        };
+        if (convId && targetMsg.id) {
+          db.updateMessage(convId, targetMsg.id, { learnedSkill: targetMsg.learnedSkill });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[ContinuousLearning] Skill analysis notice:', err);
+  }
+};
+
 // Chat Endpoint with Multi-turn Multi-Agent Orchestrator & Tool Calling
 apiRouter.post('/chat', async (req: Request, res: Response) => {
+
   try {
     const userId = getUserId(req);
     const { conversationId, message, image, enableSearch } = req.body;
@@ -84,9 +121,61 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
 
     db.log(userId, 'ORCHESTRATEUR', `Message reçu : "${(message || '').substring(0, 50)}"`, 'LEVEL_1_CONSULTATION', 'success', `Agent activé: ${specializedAgent}`);
 
+    // 4b. Dedicated Image Generation Intent Routing
+    const imageIntent = imageGenerationRouter.detectImageIntent(message || '');
+    if (imageIntent.isImageRequest && imageIntent.cleanPrompt) {
+      try {
+        db.log(userId, 'CRÉATIVITÉ', `Génération d'image détectée : "${imageIntent.cleanPrompt.substring(0, 45)}"`, 'LEVEL_1_CONSULTATION', 'success', 'Routage vers le moteur d\'image');
+        
+        const preferredProvider = settings.imageProvider || 'auto';
+        const imgResult = await imageGenerationRouter.generateImage({
+          prompt: imageIntent.cleanPrompt,
+          provider: preferredProvider,
+          model: settings.imageModel,
+          referenceImage: imageIntent.isEdit && image ? image : undefined,
+        });
+
+        db.recordUsage(500);
+
+        const imgAssistantMsg = db.addMessage(
+          conversationId,
+          {
+            role: 'assistant',
+            content: `Voici l'image générée selon votre demande : **"${imageIntent.cleanPrompt}"**.\n\n*(Moteur : ${imgResult.provider.toUpperCase()} [${imgResult.model}])*\n\nVous pouvez la télécharger, me demander une variante ou la modifier directement.`,
+            images: [imgResult.imageUrl],
+            agentInvolved: 'creative_agent',
+            imageGeneration: {
+              prompt: imageIntent.cleanPrompt,
+              revisedPrompt: imgResult.revisedPrompt,
+              provider: imgResult.provider,
+              model: imgResult.model,
+              aspectRatio: imgResult.aspectRatio,
+              status: 'completed',
+            },
+          },
+          userId
+        );
+
+        return res.json(imgAssistantMsg);
+      } catch (imgErr: any) {
+        console.warn('Image generation error in chat:', imgErr.message);
+        const errorMsg = db.addMessage(
+          conversationId,
+          {
+            role: 'assistant',
+            content: `⚠️ **Impossible de générer l'image :** ${imgErr.message}\n\n💡 Pour générer des images directement dans le chat, activez l'une des clés compatibles (**Google Gemini**, **OpenAI DALL·E**, **OpenRouter FLUX** ou **NVIDIA NIM**) dans les **Paramètres > Fournisseurs d'IA & Clés API**.`,
+            agentInvolved: 'creative_agent',
+          },
+          userId
+        );
+        return res.json(errorMsg);
+      }
+    }
+
     const provInfo = providerManager.getProvidersInfo();
     const activeProv = provInfo.activeProvider;
     const hasAnyConfiguredKey = provInfo.providers.some(p => p.hasKey);
+
 
     // If an external provider (OpenAI, NVIDIA NIM, OpenRouter) is active with a valid key
     if (activeProv !== 'gemini' && providerManager.getKey(activeProv)) {
@@ -111,8 +200,10 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
             userId
           );
           db.log(userId, specializedAgent.toUpperCase(), `Réponse générée via ${completion.providerUsed} (${completion.modelUsed})`, 'LEVEL_1_CONSULTATION', 'success', `Secours utilisés : ${completion.fallbackCount}`);
+          maybeLearnSkill(message, completion.text, conversationId, userId, assistantMsg);
           return res.json(assistantMsg);
         }
+
       } catch (err: any) {
         if (/HTTP 401|HTTP 403|Erreur 401|Erreur 403/.test(String(err?.message || err))) throw err;
         console.warn(`Fournisseur ${activeProv} indisponible, tentative avec le secours:`, err.message);
@@ -278,8 +369,11 @@ apiRouter.post('/chat', async (req: Request, res: Response) => {
       userId
     );
 
+    maybeLearnSkill(message, assistantReplyText, conversationId, userId, assistantMsg);
+
     return res.json(assistantMsg);
   } catch (error: any) {
+
     console.error('Chat error:', error);
     const userId = getUserId(req);
     const errStr = error.message || String(error);
@@ -835,3 +929,96 @@ apiRouter.post('/providers/test', async (req: Request, res: Response) => {
   const result = await providerManager.testProvider(id);
   res.json(result);
 });
+
+// ==========================================
+// PHASE 12: Image Generation Endpoints
+// ==========================================
+
+apiRouter.get('/images/capabilities', (_req: Request, res: Response) => {
+  res.json(imageGenerationRouter.getCapabilities());
+});
+
+apiRouter.post('/images/generate', async (req: Request, res: Response) => {
+  try {
+    const userId = getUserId(req);
+    const { prompt, provider, model, aspectRatio, referenceImage, conversationId } = req.body;
+
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ error: 'La description (prompt) est requise pour générer une image.' });
+    }
+
+    const settings = db.getSettings();
+    const result = await imageGenerationRouter.generateImage({
+      prompt,
+      provider: provider || settings.imageProvider || 'auto',
+      model: model || settings.imageModel,
+      aspectRatio,
+      referenceImage,
+    });
+
+    db.recordUsage(500);
+
+    let savedMessage = null;
+    if (conversationId) {
+      savedMessage = db.addMessage(
+        conversationId,
+        {
+          role: 'assistant',
+          content: `Voici l'image générée : **"${prompt}"**.\n\n*(Moteur : ${result.provider.toUpperCase()} [${result.model}])*`,
+          images: [result.imageUrl],
+          agentInvolved: 'creative_agent',
+          imageGeneration: {
+            prompt,
+            revisedPrompt: result.revisedPrompt,
+            provider: result.provider,
+            model: result.model,
+            aspectRatio: result.aspectRatio,
+            status: 'completed',
+          },
+        },
+        userId
+      );
+    }
+
+    res.json({
+      ...result,
+      message: savedMessage,
+    });
+  } catch (error: any) {
+    console.error('Image generation error:', error);
+    res.status(500).json({ error: error.message || 'Erreur lors de la génération d\'image.' });
+  }
+});
+
+// ==========================================
+// PHASE 13: Continuous Learning Endpoints
+// ==========================================
+
+apiRouter.get('/learning/skills', (req: Request, res: Response) => {
+  const query = (req.query.q as string) || '';
+  const agentId = req.query.agentId as AgentId | undefined;
+  if (query) {
+    res.json(continuousLearningEngine.findRelevantSkills(query, agentId));
+  } else {
+    res.json(db.getSkills());
+  }
+});
+
+apiRouter.post('/learning/analyze', (req: Request, res: Response) => {
+  const { message, reply, conversationId } = req.body;
+  const userId = getUserId(req);
+  if (!message) return res.status(400).json({ error: 'Message requis.' });
+
+  const extracted = continuousLearningEngine.analyzeForSkill(message, reply);
+  if (!extracted) {
+    return res.json({ detected: false });
+  }
+
+  const result = continuousLearningEngine.registerOrEnrichSkill(extracted, conversationId, userId);
+  res.json({
+    detected: true,
+    skill: result.skill,
+    action: result.action,
+  });
+});
+

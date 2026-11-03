@@ -23,8 +23,15 @@ import {
   Loader2,
   CheckCircle2,
   Sliders,
-  UserCheck
+  UserCheck,
+  Download,
+  RefreshCw,
+  Edit3,
+  BookmarkCheck,
+  ArrowRight,
+  Image as ImageIcon
 } from 'lucide-react';
+
 import { AvatarPresence } from './avatar/AvatarPresence.tsx';
 import { AvatarControlsModal } from './avatar/AvatarControlsModal.tsx';
 import { useAvatarState } from '../hooks/useAvatarState.ts';
@@ -408,16 +415,56 @@ export const ChatView: React.FC<ChatViewProps> = ({
                         : 'bg-[#101426]/90 border border-slate-800/90 text-slate-200 shadow-xl shadow-black/40 rounded-tl-sm'
                     }`}
                   >
-                    {/* Images if attached */}
+                    {/* Images if attached or generated */}
                     {msg.images && msg.images.length > 0 && (
-                      <div className="mb-2.5 space-y-2">
+                      <div className="mb-3 space-y-2.5">
                         {msg.images.map((img, idx) => (
-                          <img
-                            key={idx}
-                            src={img}
-                            alt="Pièce jointe"
-                            className="max-h-60 rounded-xl object-contain border border-white/10"
-                          />
+                          <div key={idx} className="relative group rounded-2xl overflow-hidden border border-purple-500/30 bg-black/40 shadow-xl">
+                            <img
+                              src={img}
+                              alt="Visuel CHLOÉ"
+                              className="max-h-72 w-full object-contain rounded-2xl"
+                            />
+                            {/* Action toolbar for generated images */}
+                            {!isUser && (
+                              <div className="p-2 bg-[#090d1f]/95 border-t border-purple-500/20 flex flex-wrap items-center justify-between gap-1.5 text-[11px]">
+                                <span className="text-purple-300 font-medium flex items-center gap-1">
+                                  <ImageIcon className="w-3.5 h-3.5 text-purple-400" />
+                                  <span>{msg.imageGeneration?.model || 'Image IA'}</span>
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <a
+                                    href={img}
+                                    download={`chloe-image-${Date.now()}.png`}
+                                    className="px-2 py-1 rounded-lg bg-purple-950/60 hover:bg-purple-900 border border-purple-500/30 text-purple-200 flex items-center gap-1 transition-all"
+                                    title="Télécharger l'image"
+                                  >
+                                    <Download className="w-3 h-3" />
+                                    <span>Télécharger</span>
+                                  </a>
+                                  <button
+                                    onClick={() => onSendMessage(`Régénère une variante de cette image : ${msg.imageGeneration?.prompt || 'création visuelle'}`)}
+                                    className="px-2 py-1 rounded-lg bg-purple-950/60 hover:bg-purple-900 border border-purple-500/30 text-purple-200 flex items-center gap-1 transition-all"
+                                    title="Générer une nouvelle variante"
+                                  >
+                                    <RefreshCw className="w-3 h-3" />
+                                    <span>Régénérer</span>
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setInputText(`Modifie cette image pour : `);
+                                      setSelectedImage(img);
+                                    }}
+                                    className="px-2 py-1 rounded-lg bg-purple-950/60 hover:bg-purple-900 border border-purple-500/30 text-purple-200 flex items-center gap-1 transition-all"
+                                    title="Demander une modification"
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                    <span>Modifier</span>
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         ))}
                       </div>
                     )}
@@ -426,6 +473,30 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     <div className="whitespace-pre-wrap leading-relaxed space-y-1">
                       {msg.content}
                     </div>
+
+                    {/* Learned Skill Card (Continuous Learning) */}
+                    {msg.learnedSkill && (
+                      <div className="mt-3 p-2.5 rounded-xl bg-purple-950/60 border border-purple-500/40 flex items-center justify-between text-xs text-purple-200 shadow-md">
+                        <div className="flex items-center gap-2">
+                          <BookmarkCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <div>
+                            <span className="font-semibold text-white block">
+                              {msg.learnedSkill.action === 'created' ? '💡 Nouvelle compétence mémorisée' : '💡 Compétence enrichie'} :
+                            </span>
+                            <span className="text-[11px] text-purple-300">{msg.learnedSkill.name}</span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => onSelectTab('skills')}
+                          className="px-2 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-medium text-[11px] flex items-center gap-1 transition-colors shrink-0"
+                          title="Consulter la fiche Skill"
+                        >
+                          <span>Consulter</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+
 
                     {/* Tool Invocations Badge / Expansion */}
                     {msg.toolsUsed && msg.toolsUsed.length > 0 && (

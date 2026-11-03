@@ -24,8 +24,11 @@ import {
   RefreshCw,
   CheckCircle2,
   AlertCircle,
-  Zap
+  Zap,
+  Image as ImageIcon,
+  Brain
 } from 'lucide-react';
+
 import { useAvatarState } from '../hooks/useAvatarState.ts';
 import { AvatarSize, AvatarPosition, AvatarVisibility, AvatarLayoutMode } from '../types/avatar.ts';
 
@@ -664,6 +667,104 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </label>
           </div>
         </div>
+
+        {/* Phase 12: Génération d'Images directement dans le Chat */}
+        <div className="p-4 rounded-2xl bg-[#0f1428] border border-fuchsia-500/30 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-white text-sm flex items-center gap-2">
+              <ImageIcon className="w-4 h-4 text-fuchsia-400" />
+              Génération d'Images dans le Chat
+            </h3>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-fuchsia-950/70 text-fuchsia-300 border border-fuchsia-500/40 font-mono">
+              Phase 12
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            CHLOÉ détecte automatiquement les demandes de création visuelle et fait appel aux véritables moteurs d'images configurés.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-slate-400 font-medium mb-1">Moteur d'image préféré :</label>
+              <select
+                value={form.imageProvider || 'auto'}
+                onChange={e => setForm({ ...form, imageProvider: e.target.value as any })}
+                className="w-full bg-[#12162B] border border-slate-700/80 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-purple-500 font-medium"
+              >
+                <option value="auto">Automatique (Meilleur disponible avec clé)</option>
+                <option value="gemini">Google Gemini (gemini-3.1-flash-lite-image)</option>
+                <option value="openai">OpenAI (DALL·E 3)</option>
+                <option value="openrouter">OpenRouter (FLUX.1 Schnell / SDXL)</option>
+                <option value="nvidia">NVIDIA NIM (SDXL 1.0)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-slate-400 font-medium mb-1">Format de ratio d'aspect par défaut :</label>
+              <select
+                defaultValue="1:1"
+                className="w-full bg-[#12162B] border border-slate-700/80 rounded-xl px-3 py-2 text-slate-100 focus:outline-none focus:border-purple-500 font-medium"
+              >
+                <option value="1:1">Carré (1:1 - Recommandé)</option>
+                <option value="16:9">Paysage (16:9)</option>
+                <option value="9:16">Portrait (9:16 - Samsung S24)</option>
+                <option value="4:3">Standard (4:3)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Phase 13: Apprentissage Continu & Mémoire des Compétences */}
+        <div className="p-4 rounded-2xl bg-[#0f1428] border border-purple-500/40 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-white text-sm flex items-center gap-2">
+              <Brain className="w-4 h-4 text-purple-400" />
+              Apprentissage Continu & Mémoire des Compétences
+            </h3>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-950/70 text-purple-300 border border-purple-500/40 font-mono">
+              Phase 13
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            CHLOÉ analyse vos conversations pour identifier et mémoriser de manière structurée les méthodes, étapes et procédures de travail que vous lui partagez.
+          </p>
+
+          <div className="space-y-2 text-xs">
+            <label className="flex items-center justify-between p-3 rounded-xl bg-slate-900/60 border border-slate-800 cursor-pointer">
+              <div>
+                <span className="font-medium text-slate-200 block">Apprentissage continu actif</span>
+                <span className="text-[11px] text-slate-400">Détection contextuelle des nouvelles procédures et compétences réutilisables</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={form.continuousLearningEnabled !== false}
+                onChange={e => setForm({ ...form, continuousLearningEnabled: e.target.checked })}
+                className="w-4 h-4 accent-purple-600 rounded"
+              />
+            </label>
+
+            <label className="flex items-center justify-between p-3 rounded-xl bg-slate-900/60 border border-slate-800 cursor-pointer">
+              <div>
+                <span className="font-medium text-slate-200 block">Enregistrement et enrichissement automatique</span>
+                <span className="text-[11px] text-slate-400">Fusionne et améliore les compétences similaires sans créer de doublons</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={form.autoSaveSkills !== false}
+                onChange={e => setForm({ ...form, autoSaveSkills: e.target.checked })}
+                className="w-4 h-4 accent-purple-600 rounded"
+              />
+            </label>
+
+            <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[11px] text-slate-400 flex items-start gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <span>
+                <strong>Bouclier de confidentialité strict :</strong> Les mots de passe, jetons d'accès, secrets et clés API ne sont <em>jamais</em> enregistrés comme compétences ou mémoires.
+              </span>
+            </div>
+          </div>
+        </div>
+
 
         {/* Bouton de sauvegarde */}
         <div className="flex justify-end pt-2">

@@ -15,8 +15,11 @@ export type AvatarVisibility = 'low' | 'normal' | 'high';
 export type AvatarIntensity = 'low' | 'normal' | 'high';
 export type AvatarLayoutMode = 'background' | 'side' | 'hybrid';
 
+export type AvatarRenderingEngine = 'r3f' | 'canvas' | 'photo';
+
 export interface AvatarPreferences {
   enabled: boolean;
+  engine: AvatarRenderingEngine;
   size: AvatarSize;
   position: AvatarPosition;
   visibility: AvatarVisibility;
@@ -30,6 +33,7 @@ export interface AvatarPreferences {
 
 export const DEFAULT_AVATAR_PREFERENCES: AvatarPreferences = {
   enabled: true,
+  engine: 'r3f',
   size: 'large',
   position: 'center',
   visibility: 'high',
@@ -40,3 +44,4 @@ export const DEFAULT_AVATAR_PREFERENCES: AvatarPreferences = {
   showStatusBadge: true,
   ambientParticles: true,
 };
+

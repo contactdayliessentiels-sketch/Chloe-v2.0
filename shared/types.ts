@@ -131,7 +131,18 @@ export interface SkillConfig {
     avgLatencyMs: number;
   };
   history?: SkillHistoryEntry[];
+  // Continuous Learning & Learned Procedures
+  objective?: string;
+  method?: string;
+  executionSteps?: string[];
+  toolsNeeded?: string[];
+  examples?: string[];
+  limitations?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+  sourceConversationId?: string;
 }
+
 
 export interface MCPToolInfo {
   name: string;
@@ -305,6 +316,20 @@ export interface ChatMessage {
   agentInvolved?: AgentId;
   approvalId?: string;
   audioUrl?: string;
+  imageGeneration?: {
+    prompt: string;
+    revisedPrompt?: string;
+    provider: string;
+    model: string;
+    aspectRatio?: string;
+    status: 'generating' | 'completed' | 'failed';
+  };
+  learnedSkill?: {
+    id: string;
+    name: string;
+    action: 'created' | 'enriched';
+    summary: string;
+  };
 }
 
 export interface Conversation {
@@ -331,7 +356,12 @@ export interface UserSettings {
   webSearchEnabled: boolean;
   audioAutoSpeak: boolean;
   ownerEmail: string;
+  continuousLearningEnabled?: boolean;
+  autoSaveSkills?: boolean;
+  imageProvider?: AIProviderId | 'auto';
+  imageModel?: string;
 }
+
 
 export interface SystemUsage {
   totalRequests: number;

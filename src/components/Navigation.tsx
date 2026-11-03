@@ -51,7 +51,9 @@ export const Navigation: React.FC<NavigationProps> = ({
 
   const ALL_RUBRIQUES: TabItem[] = [
     { id: 'chat', label: '1. Accueil (Chat & IA)', icon: MessageSquare },
+
     { id: 'conversations', label: '2. Conversations', icon: MessagesSquare },
+    { id: 'avatar', label: 'Avatar 3D & Présence Chloé', icon: Sparkles },
     { id: 'skills', label: '3. Compétences (Skills)', icon: Brain },
     { id: 'mcp', label: 'MCP Manager (Protocole)', icon: Server },
     { id: 'connectors', label: '4. Connecteurs Externes', icon: Link2 },
@@ -71,6 +73,7 @@ export const Navigation: React.FC<NavigationProps> = ({
     { id: 'agents', label: 'Système Multi-Agents', icon: Users },
     { id: 'tests', label: 'Espace Admin · Tests (20/20)', icon: CheckCircle2 },
   ];
+
 
   return (
     <>
@@ -136,7 +139,7 @@ export const Navigation: React.FC<NavigationProps> = ({
             <div className="flex items-center justify-between pb-2 border-b border-slate-800">
               <div>
                 <h3 className="font-bold text-white text-base">Menu Principal CHLOÉ</h3>
-                <p className="text-xs text-slate-400">Accédez aux 12 rubriques et au panneau admin</p>
+                <p className="text-xs text-slate-400">Accédez aux rubriques et au panneau avatar</p>
               </div>
               <button
                 onClick={onToggleMenu}
@@ -146,7 +149,46 @@ export const Navigation: React.FC<NavigationProps> = ({
               </button>
             </div>
 
+            {/* Featured Assistant Portrait Card */}
+            <div
+              onClick={() => {
+                onSelectTab('avatar');
+                onToggleMenu();
+              }}
+              className="p-3 rounded-2xl bg-gradient-to-r from-purple-950/70 via-indigo-950/50 to-[#0e1224] border border-purple-500/40 flex items-center justify-between cursor-pointer hover:border-purple-400 transition-all shadow-lg active:scale-[0.99]"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-14 rounded-xl overflow-hidden bg-black/60 border border-purple-400/50 shrink-0 shadow-md">
+                  <img
+                    src="/chloe-avatar-fullbody.webp"
+                    alt="Chloé"
+                    className="w-full h-full object-cover object-top"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      if (!target.src.includes('chloe-avatar-fullbody_f3fa7d52.webp')) {
+                        target.src = '/assets/aistudio/chloe-avatar-fullbody_f3fa7d52.webp';
+                      }
+                    }}
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-white text-xs">CHLOÉ AI</span>
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.2 rounded-full font-medium">
+                      En ligne
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-purple-200 mt-0.5">Assistante Virtuelle Incarnée</p>
+                  <p className="text-[10px] text-slate-400">3D WebGL · Synchronisation vocale</p>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-[11px] shadow-sm">
+                Voir
+              </span>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+
               {ALL_RUBRIQUES.map(item => {
                 const Icon = item.icon;
                 const isActive = activeTab === item.id;
