@@ -3,9 +3,9 @@ import { ai, buildChloeSystemInstruction } from './gemini.ts';
 import { agentCoordinator } from './agents.ts';
 import { TestResult } from '../shared/types.ts';
 
-async function withTimeout<T>(promise: Promise<T>, ms = 2500): Promise<T> {
+async function withTimeout(promise: Promise<any>, ms = 2500): Promise<any> {
   let timer: any;
-  const timeoutPromise = new Promise<T>((_, reject) => {
+  const timeoutPromise = new Promise<any>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`Timeout de ${ms}ms dépassé`)), ms);
   });
   try {
