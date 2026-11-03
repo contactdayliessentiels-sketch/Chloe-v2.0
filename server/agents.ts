@@ -34,6 +34,26 @@ export const INITIAL_AGENTS: AgentInfo[] = [
     executionCount: 16,
   },
   {
+    id: 'ui_agent',
+    name: 'Agent Interface Graphique & Ergonomie',
+    role: 'Design Système & Front-End',
+    description: 'Optimise l’interface utilisateur, Tailwind CSS, la réactivité tactile mobile et les composants visuels.',
+    model: 'gemini-3.8-flash',
+    status: 'idle',
+    tools: ['validate_responsive_layout', 'inspect_ui_components'],
+    executionCount: 22,
+  },
+  {
+    id: 'analysis_agent',
+    name: 'Agent Analyse & Données',
+    role: 'Analyse quantitative & Synthèse',
+    description: 'Structure les jeux de données, extrait les tendances clés, calcule les métriques et génère des synthèses décisionnelles.',
+    model: 'gemini-3.8-flash',
+    status: 'idle',
+    tools: ['compute_data_metrics', 'extract_structured_insights'],
+    executionCount: 18,
+  },
+  {
     id: 'docs_agent',
     name: 'Agent Documents & RAG',
     role: 'Analyste de connaissances',
@@ -138,6 +158,12 @@ export class MultiAgentCoordinator {
 
     if (hasImage) {
       return 'chloe_orchestrator'; // Multi-modal direct
+    }
+    if (/interface|ui|ux|design|css|tailwind|graphique|layout|responsive|bouton|écran/i.test(text)) {
+      return 'ui_agent';
+    }
+    if (/analyse|statistique|métrique|tendance|comparatif|données|chiffres|audit/i.test(text)) {
+      return 'analysis_agent';
     }
     if (hasDocQuery || /document|pdf|fichier|résume le document|rag|passage/i.test(text)) {
       return 'docs_agent';

@@ -49,8 +49,9 @@ export const AvatarControlsModal: React.FC<AvatarControlsModalProps> = ({
     { id: 'idle', label: 'Repos / Veille', desc: 'Respiration lente, halo apaisé' },
     { id: 'listening', label: 'Écoute active', desc: 'Légère inclinaison attentive, halo cyan' },
     { id: 'thinking', label: 'Réflexion IA', desc: 'Pulsation pourpre, concentration' },
-    { id: 'responding', label: 'Réponse', desc: 'Micro-gestes en synchronisation' },
-    { id: 'speaking', label: 'Parole vocale', desc: 'Aura vibrante calée sur la voix' },
+    { id: 'speaking', label: 'Parole vocale', desc: 'Synchronisation labiale en temps réel' },
+    { id: 'greeting', label: 'Accueil / Salutation', desc: 'Sourire chaleureux et signe de tête' },
+    { id: 'happy', label: 'Joie / Sourire', desc: 'Regard pétillant et étincelles dorées' },
     { id: 'error', label: 'Alerte / Erreur', desc: 'Halo ambré bienveillant' },
     { id: 'offline', label: 'Hors ligne', desc: 'Feutré, présence sobre' },
   ];

@@ -28,6 +28,7 @@ import {
 import { AvatarPresence } from './avatar/AvatarPresence.tsx';
 import { AvatarControlsModal } from './avatar/AvatarControlsModal.tsx';
 import { useAvatarState } from '../hooks/useAvatarState.ts';
+import { speechLipSync } from '../services/speechLipSync.ts';
 
 interface ChatViewProps {
   messages: ChatMessage[];
@@ -130,17 +131,19 @@ export const ChatView: React.FC<ChatViewProps> = ({
     }
   };
 
-  // Text-To-Speech (Web Speech Synthesis)
+  // Text-To-Speech (Web Speech Synthesis with dynamic lip-sync)
   const speakText = (text: string) => {
     if (!('speechSynthesis' in window)) return;
 
     if (isSpeaking) {
       window.speechSynthesis.cancel();
+      speechLipSync.stopSpeaking();
       setIsSpeaking(false);
       return;
     }
 
     window.speechSynthesis.cancel();
+    speechLipSync.stopSpeaking();
     const cleanText = text.replace(/[*_#`\[\]]/g, '');
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.lang = settings.language === 'en' ? 'en-US' : 'fr-FR';
@@ -156,9 +159,18 @@ export const ChatView: React.FC<ChatViewProps> = ({
       utterance.voice = frenchVoice;
     }
 
+    // Connect real-time lip-sync to the utterance
+    speechLipSync.attachUtterance(utterance, cleanText);
+
     utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      speechLipSync.stopSpeaking();
+    };
+    utterance.onerror = () => {
+      setIsSpeaking(false);
+      speechLipSync.stopSpeaking();
+    };
 
     window.speechSynthesis.speak(utterance);
   };

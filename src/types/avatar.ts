@@ -4,6 +4,8 @@ export type AvatarState =
   | 'thinking'
   | 'responding'
   | 'speaking'
+  | 'happy'
+  | 'greeting'
   | 'error'
   | 'offline';
 

@@ -10,8 +10,10 @@ import {
   AlertCircle,
   WifiOff,
   Sparkles,
-  Sliders
+  Sliders,
+  Heart
 } from 'lucide-react';
+import { ChloeAvatar3D } from './ChloeAvatar3D.tsx';
 
 interface AvatarPresenceProps {
   state: AvatarState;
@@ -71,6 +73,17 @@ export const AvatarPresence: React.FC<AvatarPresenceProps> = ({
           haloColor: 'from-fuchsia-500/45 via-purple-600/35 to-transparent',
           icon: Volume2,
           animClass: 'anim-chloe-speaking',
+          glowClass: 'anim-chloe-aura',
+        };
+      case 'greeting':
+      case 'happy':
+        return {
+          label: 'CHLOÉ vous accueille chaleureusement',
+          badgeText: 'Salutation & Accueil',
+          badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+          haloColor: 'from-amber-400/40 via-purple-600/30 to-transparent',
+          icon: Heart,
+          animClass: 'anim-chloe-idle',
           glowClass: 'anim-chloe-aura',
         };
       case 'error':
@@ -169,32 +182,21 @@ export const AvatarPresence: React.FC<AvatarPresenceProps> = ({
         {/* Outer Halo Rim behind the avatar */}
         <div className="absolute top-1/4 w-[280px] h-[340px] rounded-full bg-purple-600/15 blur-3xl pointer-events-none" />
 
-        {/* Full-Body Avatar Image */}
+        {/* Living 3D Avatar (Head-to-Toe, Three.js WebGL with dynamic rig & lip-sync) */}
         <div
-          className={`relative z-10 flex items-end justify-center ${
-            preferences.animated ? meta.animClass : ''
-          }`}
+          className={`relative z-10 flex items-end justify-center pointer-events-auto ${getHeightStyle()} w-[340px] sm:w-[420px] max-w-[92vw]`}
           style={{
             transformOrigin: 'bottom center',
           }}
         >
-          <img
-            src="/chloe-avatar-fullbody.webp"
-            alt="CHLOÉ AI — Présence virtuelle"
-            className={`${getHeightStyle()} w-auto object-contain drop-shadow-[0_10px_25px_rgba(0,0,0,0.85)] filter`}
-            loading="eager"
-            decoding="async"
-            onError={(e) => {
-              // Fallback to the alternative asset path if needed
-              const target = e.currentTarget;
-              if (!target.src.includes('chloe-avatar-fullbody_f3fa7d52.webp')) {
-                target.src = '/assets/aistudio/chloe-avatar-fullbody_f3fa7d52.webp';
-              }
-            }}
+          <ChloeAvatar3D
+            state={state}
+            preferences={preferences}
+            isSpeaking={state === 'speaking'}
+            onTap={onOpenControls}
+            isSidePanel={isSidePanel}
+            className="w-full h-full"
           />
-
-          {/* Floor Shadow for physical presence grounding */}
-          <div className="absolute -bottom-2 w-3/4 h-5 rounded-[100%] bg-black/70 blur-md pointer-events-none" />
         </div>
 
         {/* Interactive Status Badge / Indicator (Allows quick tap to customize) */}

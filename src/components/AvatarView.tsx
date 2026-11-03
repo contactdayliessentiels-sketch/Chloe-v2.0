@@ -1,8 +1,9 @@
 import React from 'react';
 import { UserSettings } from '../../shared/types.ts';
-import { AvatarState } from '../types/avatar.ts';
+import { AvatarState, DEFAULT_AVATAR_PREFERENCES } from '../types/avatar.ts';
 import { useGlobalAvatar } from '../context/AvatarContext.tsx';
 import { Mic, Brain, Volume2, Sparkles, AlertCircle, WifiOff } from 'lucide-react';
+import { ChloeAvatar3D } from './avatar/ChloeAvatar3D.tsx';
 
 interface AvatarViewProps {
   settings?: Partial<UserSettings>;
@@ -103,6 +104,15 @@ export const AvatarView: React.FC<AvatarViewProps> = ({
           dotClass: 'bg-fuchsia-400',
           icon: Volume2,
         };
+      case 'greeting':
+      case 'happy':
+        return {
+          label: 'Salutation & Sourire',
+          badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+          haloClass: 'from-amber-400/40 via-purple-600/30 to-transparent',
+          dotClass: 'bg-amber-400',
+          icon: Sparkles,
+        };
       case 'error':
         return {
           label: 'Alerte temporaire',
@@ -167,29 +177,18 @@ export const AvatarView: React.FC<AvatarViewProps> = ({
         />
       )}
 
-      {/* Main Avatar Image with Dynamic Animation Class */}
+      {/* 3D Living Avatar Canvas */}
       <div
-        className={`relative z-10 flex items-end justify-center transition-transform duration-500 ${getAnimationClass(
-          currentState
-        )}`}
+        className={`relative z-10 flex items-end justify-center ${getHeightClass()} w-full max-w-[400px]`}
         style={{ transformOrigin: 'bottom center' }}
       >
-        <img
-          src={avatarUrl}
-          alt="CHLOÉ AI — Présence Virtuelle"
-          className={`${getHeightClass()} w-auto object-contain drop-shadow-[0_12px_30px_rgba(0,0,0,0.85)] filter transition-all duration-500`}
-          loading="eager"
-          decoding="async"
-          onError={e => {
-            const target = e.currentTarget;
-            if (!target.src.includes('chloe-avatar-fullbody_f3fa7d52.webp')) {
-              target.src = '/assets/aistudio/chloe-avatar-fullbody_f3fa7d52.webp';
-            }
-          }}
+        <ChloeAvatar3D
+          state={currentState}
+          preferences={globalAvatar.preferences || DEFAULT_AVATAR_PREFERENCES}
+          isSpeaking={currentState === 'speaking'}
+          onTap={onClick}
+          className="w-full h-full"
         />
-
-        {/* Realistic Floor Shadow for grounding */}
-        <div className="absolute -bottom-2 w-3/4 h-5 rounded-[100%] bg-black/70 blur-md pointer-events-none" />
       </div>
 
       {/* Interactive Status Badge */}

@@ -53,6 +53,8 @@ export type AgentId =
   | 'chloe_orchestrator'
   | 'search_agent'
   | 'dev_agent'
+  | 'ui_agent'
+  | 'analysis_agent'
   | 'docs_agent'
   | 'comm_agent'
   | 'personal_agent'
